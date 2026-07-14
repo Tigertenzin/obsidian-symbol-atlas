@@ -1,0 +1,15 @@
+.symbol-atlas-suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.symbol-atlas-emoji {
+    font-size: 1.4em;
+    min-width: 1.6em;
+    text-align: center;
+}
+
+.symbol-atlas-name {
+    color: var(--text-normal);
+}

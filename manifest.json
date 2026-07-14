@@ -1,0 +1,10 @@
+{
+    "id": "symbol-atlas",
+    "name": "Symbol Atlas",
+    "version": "1.0.0",
+    "minAppVersion": "1.0.0",
+    "description": "A custom emoji/symbol picker populated from your own Symbol Atlas database, with recency and alphabetical sorting.",
+    "author": "You",
+    "authorUrl": "",
+    "isDesktopOnly": false
+}
