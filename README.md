@@ -50,18 +50,6 @@ Go to Settings > Symbol Atlas. There you can:
 - Switch sort mode between "Recently used" and "Alphabetical".
 - Export your list as JSON, or paste in a JSON array to bulk-import.
 
-## Project structure
-
-```
-obsidian-symbol-atlas/
-├── main.ts             # All plugin logic (modal, settings tab, commands)
-├── manifest.json        # Plugin metadata Obsidian reads
-├── package.json         # npm dependencies + build scripts
-├── tsconfig.json         # TypeScript compiler config
-├── esbuild.config.mjs    # Bundles main.ts -> main.js
-├── styles.css            # Picker styling
-└── README.md
-```
 
 ## Next steps / ideas
 
@@ -70,8 +58,9 @@ obsidian-symbol-atlas/
 - Sync the JSON symbol list via a note in your vault instead of data.json,
   so it travels with vault sync tools.
 
+## Version History
 
-## v1.1 update: search by emoji name too
+### v1.1 update: search by emoji name too
 
 The picker now matches against both your descriptor text AND the emoji's
 official Unicode name (e.g. typing "brain" will find 🧠 even if your
