@@ -1,7 +1,6 @@
 # Symbol Atlas — Obsidian Plugin
 
-A custom emoji-style picker for Obsidian, populated entirely from your own
-"Symbol Atlas": a list of {emoji, descriptor} pairs that you control.
+A custom emoji-style picker for Obsidian, populated entirely from my "Symbol Atlas": a list of {emoji, descriptor} 
 
 ## Features
 
@@ -16,7 +15,7 @@ A custom emoji-style picker for Obsidian, populated entirely from your own
 
 ## How it's stored
 
-Your symbols live inside Obsidian's own plugin data file:
+Symbols live inside Obsidian's own plugin data file:
 `<vault>/.obsidian/plugins/symbol-atlas/data.json`
 This is created automatically the first time you save a setting or add a
 symbol. You can also copy/paste your list as JSON via the Import/Export
