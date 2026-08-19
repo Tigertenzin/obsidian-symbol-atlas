@@ -48,17 +48,65 @@ Go to Settings > Symbol Atlas. There you can:
 - Add a new emoji + descriptor pair.
 - Edit or delete existing entries.
 - Switch sort mode between "Recently used" and "Alphabetical".
+- Set text to automatically insert after each symbol (e.g. `::`).
 - Export your list as JSON, or paste in a JSON array to bulk-import.
+
+### Sourcing symbols from a note instead
+
+By default symbols are managed directly in the settings tab above. If you'd
+rather maintain them as a list in a note you already keep (e.g. a "symbol
+legend" note), switch **Symbol source** to "Vault note" and configure:
+- **Source note** — start typing to search your vault, then pick a note.
+- **Heading** — pick a level-2 (`##`) heading in that note. Every list item
+  under it, at any nesting depth, of the form `- <emoji>:: <descriptor>`
+  becomes a symbol. List items without `::` are ignored, so you can freely
+  mix in plain notes/comments alongside them. The section ends at the next
+  `#`/`##` heading, so other sections in the same note are left alone.
+
+The plugin re-syncs automatically whenever the note is saved, and there's
+also a manual "Sync now" button. While in this mode, symbols are read-only
+from the settings tab (edit the note instead); switching back to "Manual
+list" leaves your most-recently-synced symbols in place as an editable
+starting point.
 
 
 ## Next steps / ideas
 
 - Add tag/category fields to symbols for grouping.
 - Add drag-to-reorder in settings.
-- Sync the JSON symbol list via a note in your vault instead of data.json,
-  so it travels with vault sync tools.
 
 ## Version History
+
+### v1.2 update: toolbar icon, auto-inserted suffix, and note-sourced symbols
+
+- The command now has a proper icon (smiley-plus) instead of a generic
+  question mark in the command palette / toolbar.
+- New setting: text to automatically insert after each symbol (e.g. `::`),
+  so you don't have to type it by hand every time.
+- New **Symbol source** setting: instead of managing symbols only in the
+  settings tab, you can point the plugin at a note plus a `##` heading in
+  your vault and it mirrors the `- <emoji>:: <descriptor>` list items under
+  it automatically, syncing whenever you save the note. See "Sourcing
+  symbols from a note instead" above.
+- Editing and deleting a symbol now use proper in-app dialogs instead of
+  browser prompts, and delete/import ask for confirmation first.
+- Requires Obsidian **1.6.6** or newer (bumped from 1.1.0) — the note-source
+  feature relies on newer Obsidian APIs.
+
+### Updating from v1.1
+
+1. Replace `main.ts`, `package.json`, and `manifest.json` in your project
+   folder with the new versions from this package.
+2. In a terminal, in the project folder, run:
+   ```
+   npm run build
+   ```
+   (no `npm install` needed — no new dependencies were added.)
+3. Copy the freshly generated `main.js`, plus the updated `manifest.json`,
+   into your vault's `<YourVault>/.obsidian/plugins/symbol-atlas/` folder,
+   overwriting the old ones. `styles.css` doesn't need to change.
+4. In Obsidian, reload the plugin: Settings > Community plugins > toggle
+   Symbol Atlas off then on again (or just restart Obsidian).
 
 ### v1.1 update: search by emoji name too
 
