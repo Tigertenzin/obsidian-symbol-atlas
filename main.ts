@@ -3,6 +3,7 @@ import {
     Editor,
     FuzzyMatch,
     FuzzySuggestModal,
+    Modal,
     Plugin,
     PluginSettingTab,
     Setting,
@@ -11,6 +12,7 @@ import {
 import { emojiToName } from "gemoji";
 
 interface SymbolEntry {
+    id: string;
     emoji: string;
     name: string;
     lastUsed?: number; // epoch ms, undefined if never used
@@ -24,16 +26,16 @@ interface SymbolAtlasSettings {
 }
 
 const DEFAULT_SYMBOLS: SymbolEntry[] = [
-    { emoji: "✅", name: "done / completed" },
-    { emoji: "🚧", name: "in progress / work in progress" },
-    { emoji: "❗", name: "important / warning" },
-    { emoji: "💡", name: "idea" },
-    { emoji: "🔗", name: "link / reference" },
-    { emoji: "📌", name: "pinned / priority" },
-    { emoji: "🐛", name: "bug" },
-    { emoji: "🔥", name: "urgent / hot" },
-    { emoji: "📚", name: "reading / book" },
-    { emoji: "🎮", name: "game / gaming" },
+    { id: "default-done", emoji: "✅", name: "done / completed" },
+    { id: "default-wip", emoji: "🚧", name: "in progress / work in progress" },
+    { id: "default-warning", emoji: "❗", name: "important / warning" },
+    { id: "default-idea", emoji: "💡", name: "idea" },
+    { id: "default-link", emoji: "🔗", name: "link / reference" },
+    { id: "default-pinned", emoji: "📌", name: "pinned / priority" },
+    { id: "default-bug", emoji: "🐛", name: "bug" },
+    { id: "default-urgent", emoji: "🔥", name: "urgent / hot" },
+    { id: "default-reading", emoji: "📚", name: "reading / book" },
+    { id: "default-game", emoji: "🎮", name: "game / gaming" },
 ];
 
 const DEFAULT_SETTINGS: SymbolAtlasSettings = {
@@ -67,6 +69,67 @@ function getEmojiNames(emojiStr: string): string {
     return names.join(" ");
 }
 
+function generateId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+    return `sym-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Builds one validated SymbolEntry from an arbitrary parsed JSON value.
+// Throws a descriptive Error on the first problem found so import can fail
+// fast with an actionable message instead of silently admitting bad data.
+function toImportedSymbol(
+    raw: unknown,
+    index: number,
+    seenIds: Set<string>
+): SymbolEntry {
+    if (typeof raw !== "object" || raw === null) {
+        throw new Error(`Entry ${index + 1} is not a valid object.`);
+    }
+    const obj = raw as Record<string, unknown>;
+
+    const emoji = typeof obj.emoji === "string" ? obj.emoji.trim() : "";
+    if (!emoji) {
+        throw new Error(`Entry ${index + 1} is missing a valid "emoji".`);
+    }
+    const name = typeof obj.name === "string" ? obj.name.trim() : "";
+    if (!name) {
+        throw new Error(`Entry ${index + 1} is missing a valid "name".`);
+    }
+
+    // Preserve an imported id for clean export/import round-trips, as long
+    // as it's not already claimed by an earlier entry in this same batch.
+    // Old (pre-1.2) exports have no id at all, so falling back to a fresh
+    // one here is also what makes those imports still work.
+    const candidateId = typeof obj.id === "string" ? obj.id.trim() : "";
+    const id = candidateId && !seenIds.has(candidateId) ? candidateId : generateId();
+    seenIds.add(id);
+
+    const entry: SymbolEntry = { id, emoji, name };
+    if (typeof obj.lastUsed === "number" && Number.isFinite(obj.lastUsed)) {
+        entry.lastUsed = obj.lastUsed;
+    }
+    return entry;
+}
+
+// Parses and validates a full import payload. Rejects the whole batch (no
+// partial/silent-skip) if anything is malformed, since a bad paste almost
+// always means the whole paste is wrong, not just one entry.
+function parseImportedSymbols(text: string): SymbolEntry[] {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        throw new Error("Invalid JSON. Import failed.");
+    }
+    if (!Array.isArray(parsed)) {
+        throw new Error("Expected a JSON array of symbols.");
+    }
+    const seenIds = new Set<string>();
+    return parsed.map((raw, index) => toImportedSymbol(raw, index, seenIds));
+}
+
 export default class SymbolAtlasPlugin extends Plugin {
     settings: SymbolAtlasSettings;
 
@@ -94,7 +157,33 @@ export default class SymbolAtlasPlugin extends Plugin {
 
     async loadSettings() {
         const loaded = await this.loadData();
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+        const merged: SymbolAtlasSettings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+        // Clone so we never hold a live reference into the shared
+        // DEFAULT_SYMBOLS module-level objects.
+        merged.symbols = (merged.symbols ?? DEFAULT_SYMBOLS).map((s) => ({ ...s }));
+        this.settings = merged;
+
+        // Backfill ids for any entry saved before this field existed
+        // (v1.1 and earlier). Idempotent: an entry that already has an id
+        // is never touched again, so this is safe to run on every load.
+        let didMigrate = false;
+        for (const entry of this.settings.symbols) {
+            if (!entry.id || typeof entry.id !== "string") {
+                entry.id = generateId();
+                didMigrate = true;
+            }
+        }
+        if (didMigrate) {
+            try {
+                await this.saveSettings();
+            } catch (e) {
+                // Non-fatal: ids still exist in memory for this session,
+                // and the migration simply retries on next load. Must not
+                // throw here — onload() awaits loadSettings() before it
+                // registers the command and settings tab.
+                console.error("Symbol Atlas: failed to persist id migration", e);
+            }
+        }
     }
 
     async saveSettings() {
@@ -117,9 +206,7 @@ export default class SymbolAtlasPlugin extends Plugin {
     }
 
     async markUsed(entry: SymbolEntry) {
-        const target = this.settings.symbols.find(
-            (s) => s.emoji === entry.emoji && s.name === entry.name
-        );
+        const target = this.settings.symbols.find((s) => s.id === entry.id);
         if (target) {
             target.lastUsed = Date.now();
             await this.saveSettings();
@@ -168,6 +255,124 @@ class SymbolPickerModal extends FuzzySuggestModal<SymbolEntry> {
         this.editor.replaceSelection(item.emoji);
         await this.plugin.markUsed(item);
         new Notice(`Inserted ${item.emoji} (${item.name})`);
+    }
+}
+
+interface ConfirmModalOptions {
+    title?: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    isDestructive?: boolean;
+    onConfirm: () => void | Promise<void>;
+}
+
+// Generic Cancel/Confirm modal used by every destructive action in this
+// plugin (delete, import-replace). Native window.confirm() is avoided
+// because it's unreliable in mobile WebViews, and this plugin isn't
+// desktop-only.
+class ConfirmModal extends Modal {
+    options: ConfirmModalOptions;
+
+    constructor(app: App, options: ConfirmModalOptions) {
+        super(app);
+        this.options = options;
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+
+        if (this.options.title) {
+            contentEl.createEl("h2", { text: this.options.title });
+        }
+        contentEl.createEl("p", { text: this.options.message });
+
+        const buttonRow = new Setting(contentEl);
+        buttonRow.addButton((button) =>
+            button
+                .setButtonText(this.options.cancelText ?? "Cancel")
+                .onClick(() => this.close())
+        );
+        buttonRow.addButton((button) => {
+            button
+                .setButtonText(this.options.confirmText ?? "Confirm")
+                .onClick(async () => {
+                    this.close();
+                    await this.options.onConfirm();
+                });
+            if (this.options.isDestructive) {
+                button.setWarning();
+            } else {
+                button.setCta();
+            }
+        });
+    }
+
+    onClose() {
+        this.contentEl.empty();
+    }
+}
+
+// Replaces the old window.prompt()-based edit flow: a real Modal works
+// reliably on mobile, and lets you fix a mistyped emoji, not just the
+// descriptor.
+class SymbolEditModal extends Modal {
+    onSubmit: (result: { emoji: string; name: string }) => void;
+    emojiValue: string;
+    nameValue: string;
+
+    constructor(
+        app: App,
+        entry: SymbolEntry,
+        onSubmit: (result: { emoji: string; name: string }) => void
+    ) {
+        super(app);
+        this.onSubmit = onSubmit;
+        this.emojiValue = entry.emoji;
+        this.nameValue = entry.name;
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+        contentEl.createEl("h2", { text: "Edit symbol" });
+
+        new Setting(contentEl).setName("Emoji").addText((text) =>
+            text.setValue(this.emojiValue).onChange((value) => {
+                this.emojiValue = value.trim();
+            })
+        );
+
+        new Setting(contentEl).setName("Descriptor").addText((text) =>
+            text.setValue(this.nameValue).onChange((value) => {
+                this.nameValue = value.trim();
+            })
+        );
+
+        const buttonRow = new Setting(contentEl);
+        buttonRow.addButton((button) =>
+            button.setButtonText("Cancel").onClick(() => this.close())
+        );
+        buttonRow.addButton((button) =>
+            button
+                .setButtonText("Save")
+                .setCta()
+                .onClick(() => {
+                    if (!this.emojiValue || !this.nameValue) {
+                        new Notice(
+                            "Please provide both an emoji and a descriptor."
+                        );
+                        return;
+                    }
+                    this.onSubmit({ emoji: this.emojiValue, name: this.nameValue });
+                    this.close();
+                })
+        );
+    }
+
+    onClose() {
+        this.contentEl.empty();
     }
 }
 
@@ -240,6 +445,7 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                         return;
                     }
                     this.plugin.settings.symbols.push({
+                        id: generateId(),
                         emoji: newEmoji,
                         name: newName,
                     });
@@ -266,16 +472,18 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 button
                     .setIcon("pencil")
                     .setTooltip("Edit")
-                    .onClick(async () => {
-                        const newDesc = window.prompt(
-                            "Edit descriptor:",
-                            entry.name
-                        );
-                        if (newDesc && newDesc.trim().length > 0) {
-                            entry.name = newDesc.trim();
-                            await this.plugin.saveSettings();
-                            this.render();
-                        }
+                    .onClick(() => {
+                        new SymbolEditModal(this.app, entry, async (result) => {
+                            const target = this.plugin.settings.symbols.find(
+                                (s) => s.id === entry.id
+                            );
+                            if (target) {
+                                target.emoji = result.emoji;
+                                target.name = result.name;
+                                await this.plugin.saveSettings();
+                                this.render();
+                            }
+                        }).open();
                     })
             );
 
@@ -283,13 +491,21 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 button
                     .setIcon("trash")
                     .setTooltip("Delete")
-                    .onClick(async () => {
-                        this.plugin.settings.symbols =
-                            this.plugin.settings.symbols.filter(
-                                (s) => s !== entry
-                            );
-                        await this.plugin.saveSettings();
-                        this.render();
+                    .onClick(() => {
+                        new ConfirmModal(this.app, {
+                            title: "Delete symbol",
+                            message: `Delete ${entry.emoji} "${entry.name}"? This cannot be undone.`,
+                            confirmText: "Delete",
+                            isDestructive: true,
+                            onConfirm: async () => {
+                                this.plugin.settings.symbols =
+                                    this.plugin.settings.symbols.filter(
+                                        (s) => s.id !== entry.id
+                                    );
+                                await this.plugin.saveSettings();
+                                this.render();
+                            },
+                        }).open();
                     })
             );
         });
@@ -311,7 +527,10 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
         let importText = "";
         new Setting(containerEl)
             .setName("Import Symbol Atlas JSON")
-            .setDesc("Paste a JSON array of {emoji, name} objects, then click Import (this replaces your current list).")
+            .setDesc(
+                "Paste a JSON array of {emoji, name} objects, then click Import. " +
+                    "You'll be asked to confirm before it replaces your current list."
+            )
             .addTextArea((text) => {
                 text.setPlaceholder('[{"emoji":"🎯","name":"goal"}]');
                 text.onChange((value) => {
@@ -322,17 +541,35 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 button
                     .setButtonText("Import")
                     .setWarning()
-                    .onClick(async () => {
+                    .onClick(() => {
+                        let imported: SymbolEntry[];
                         try {
-                            const parsed = JSON.parse(importText);
-                            if (!Array.isArray(parsed)) throw new Error();
-                            this.plugin.settings.symbols = parsed;
-                            await this.plugin.saveSettings();
-                            new Notice("Symbol Atlas imported successfully.");
-                            this.render();
+                            imported = parseImportedSymbols(importText);
                         } catch (e) {
-                            new Notice("Invalid JSON. Import failed.");
+                            new Notice(
+                                e instanceof Error
+                                    ? e.message
+                                    : "Invalid JSON. Import failed."
+                            );
+                            return;
                         }
+
+                        const currentCount = this.plugin.settings.symbols.length;
+                        const importedCount = imported.length;
+                        new ConfirmModal(this.app, {
+                            title: "Import Symbol Atlas",
+                            message:
+                                `This will replace your existing ${currentCount} symbol${currentCount === 1 ? "" : "s"} ` +
+                                `with ${importedCount} imported symbol${importedCount === 1 ? "" : "s"}. This cannot be undone.`,
+                            confirmText: "Import",
+                            isDestructive: true,
+                            onConfirm: async () => {
+                                this.plugin.settings.symbols = imported;
+                                await this.plugin.saveSettings();
+                                new Notice("Symbol Atlas imported successfully.");
+                                this.render();
+                            },
+                        }).open();
                     })
             );
     }

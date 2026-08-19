@@ -1,0 +1,10 @@
+# Dependencies
+node_modules/
+
+# Obsidian plugin data — never checked into this repo (it lives in the
+# user's vault), ignored defensively in case this repo is symlinked into
+# a vault's .obsidian/plugins/ folder for local dev/testing.
+data.json
+
+# macOS
+.DS_Store
