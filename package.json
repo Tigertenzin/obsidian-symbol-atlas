@@ -1,6 +1,6 @@
 {
     "name": "symbol-atlas",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Custom emoji picker for Obsidian",
     "main": "main.js",
     "scripts": {

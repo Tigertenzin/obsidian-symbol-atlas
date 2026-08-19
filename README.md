@@ -59,9 +59,13 @@ legend" note), switch **Symbol source** to "Vault note" and configure:
 - **Source note** — start typing to search your vault, then pick a note.
 - **Heading** — pick a level-2 (`##`) heading in that note. Every list item
   under it, at any nesting depth, of the form `- <emoji>:: <descriptor>`
-  becomes a symbol. List items without `::` are ignored, so you can freely
-  mix in plain notes/comments alongside them. The section ends at the next
-  `#`/`##` heading, so other sections in the same note are left alone.
+  becomes a symbol. A sub-bullet directly under a symbol that does NOT
+  itself contain `::` becomes that symbol's subtitle (shown under its name
+  in the picker) — handy for a symbol that needs more explanation than the
+  descriptor alone gives. Multiple such sub-bullets join into one subtitle.
+  Any other list item without `::` is otherwise ignored, so you can freely
+  mix in plain notes/comments. The section ends at the next `#`/`##`
+  heading, so other sections in the same note are left alone.
 
 The plugin re-syncs automatically whenever the note is saved, and there's
 also a manual "Sync now" button. While in this mode, symbols are read-only
@@ -76,6 +80,13 @@ starting point.
 - Add drag-to-reorder in settings.
 
 ## Version History
+
+### v1.2.1 update: symbol subtitles from note sub-bullets
+
+When sourcing symbols from a note, a sub-bullet directly under a symbol
+that doesn't itself contain `::` now becomes that symbol's subtitle,
+shown under its name in the picker (see "Sourcing symbols from a note
+instead" above). No settings changes — this only affects vault-note mode.
 
 ### v1.2 update: toolbar icon, auto-inserted suffix, and note-sourced symbols
 
