@@ -18,6 +18,7 @@ interface SymbolEntry {
     id: string;
     emoji: string;
     name: string;
+    subtitle?: string; // optional extra context, shown under the name in the picker
     lastUsed?: number; // epoch ms, undefined if never used
 }
 
@@ -120,6 +121,9 @@ function toImportedSymbol(
     seenIds.add(id);
 
     const entry: SymbolEntry = { id, emoji, name };
+    if (typeof obj.subtitle === "string" && obj.subtitle.trim()) {
+        entry.subtitle = obj.subtitle.trim();
+    }
     if (typeof obj.lastUsed === "number" && Number.isFinite(obj.lastUsed)) {
         entry.lastUsed = obj.lastUsed;
     }
@@ -146,6 +150,7 @@ function parseImportedSymbols(text: string): SymbolEntry[] {
 interface ParsedSymbol {
     emoji: string;
     name: string;
+    subtitle?: string;
 }
 
 // Finds the H2 heading matching headingText and returns the raw lines
@@ -178,23 +183,61 @@ function extractSection(
     return lines.slice(startLine, endLine);
 }
 
-// Matches list-item lines at any nesting depth and splits each on the
-// first "::" into {emoji, name}. Lines without "::" (organizational notes,
-// prose) are silently skipped — this has no parent/child awareness, so a
-// non-matching bullet never suppresses its own matching children.
+interface ListStackFrame {
+    indent: number;
+    symbol: ParsedSymbol | null; // set only when this line is itself a "::" symbol
+}
+
+// Matches list-item lines at any nesting depth and splits each "::" line
+// into {emoji, name}. A line WITHOUT "::" becomes a subtitle fragment on
+// its direct parent bullet, but only if that parent is itself a "::" line
+// (multiple such children join with a space, in document order) — it does
+// NOT bubble further up, and a "::" line nested under a non-"::" line is
+// still its own independent symbol either way. Indentation is tracked via
+// a small stack so this works regardless of nesting depth or how deeply a
+// "::" line's own children are indented.
 function parseSymbolsFromLines(lines: string[]): ParsedSymbol[] {
     const out: ParsedSymbol[] = [];
-    const listItemRe = /^\s*[-*+]\s+(.*)$/;
+    const listItemRe = /^(\s*)[-*+]\s+(.*)$/;
+    const stack: ListStackFrame[] = [];
+
     for (const line of lines) {
         const match = listItemRe.exec(line);
         if (!match) continue;
-        const text = match[1];
+        const indent = match[1].length;
+        const text = match[2];
+
+        while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
+            stack.pop();
+        }
+        const parent = stack.length > 0 ? stack[stack.length - 1] : null;
+
         const sep = text.indexOf("::");
-        if (sep === -1) continue;
-        const emoji = text.slice(0, sep).trim();
-        const name = text.slice(sep + 2).trim();
-        if (!emoji || !name) continue;
-        out.push({ emoji, name });
+        if (sep !== -1) {
+            const emoji = text.slice(0, sep).trim();
+            const name = text.slice(sep + 2).trim();
+            if (emoji && name) {
+                const symbol: ParsedSymbol = { emoji, name };
+                out.push(symbol);
+                stack.push({ indent, symbol });
+                continue;
+            }
+            // Malformed "::" line (empty emoji or name) — drop it, same as
+            // before, but still track it so its own children don't
+            // misattach to a grandparent's subtitle.
+            stack.push({ indent, symbol: null });
+            continue;
+        }
+
+        if (parent?.symbol) {
+            const trimmed = text.trim();
+            if (trimmed) {
+                parent.symbol.subtitle = parent.symbol.subtitle
+                    ? `${parent.symbol.subtitle} ${trimmed}`
+                    : trimmed;
+            }
+        }
+        stack.push({ indent, symbol: null });
     }
     return out;
 }
@@ -214,11 +257,13 @@ function mergeParsedSymbols(
         if (!pool.has(e.emoji)) pool.set(e.emoji, []);
         pool.get(e.emoji)!.push(e);
     }
-    return parsed.map(({ emoji, name }) => {
+    return parsed.map(({ emoji, name, subtitle }) => {
         const match = pool.get(emoji)?.shift();
-        return match
+        const entry: SymbolEntry = match
             ? { id: match.id, emoji, name, lastUsed: match.lastUsed }
             : { id: generateId(), emoji, name };
+        if (subtitle) entry.subtitle = subtitle;
+        return entry;
     });
 }
 
@@ -428,8 +473,11 @@ class SymbolPickerModal extends FuzzySuggestModal<SymbolEntry> {
         el.addClass("symbol-atlas-suggestion-item");
         const emojiSpan = el.createSpan({ cls: "symbol-atlas-emoji" });
         emojiSpan.setText(item.emoji);
-        const nameSpan = el.createSpan({ cls: "symbol-atlas-name" });
-        nameSpan.setText(item.name);
+        const textEl = el.createDiv({ cls: "symbol-atlas-text" });
+        textEl.createDiv({ cls: "symbol-atlas-name", text: item.name });
+        if (item.subtitle) {
+            textEl.createDiv({ cls: "symbol-atlas-subtitle", text: item.subtitle });
+        }
     }
 
     async onChooseItem(item: SymbolEntry) {

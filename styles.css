@@ -8,8 +8,24 @@
     font-size: 1.4em;
     min-width: 1.6em;
     text-align: center;
+    flex-shrink: 0;
+}
+
+.symbol-atlas-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
 }
 
 .symbol-atlas-name {
     color: var(--text-normal);
+}
+
+.symbol-atlas-subtitle {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
