@@ -13,6 +13,7 @@ import {
     Setting,
     TFile,
     TFolder,
+    WorkspaceLeaf,
     normalizePath,
 } from "obsidian";
 import {
@@ -30,7 +31,8 @@ import {
 } from "./src/core";
 import { SymbolIndex } from "./src/indexer";
 import { JournalStats, aggregate, compileDateFormat, journalDater } from "./src/stats";
-import { SymbolAtlasView, VIEW_TYPE_SYMBOL_ATLAS } from "./src/view";
+import { SymbolAtlasStatsView, VIEW_TYPE_SYMBOL_STATS } from "./src/statsView";
+import { SidebarLayout, SymbolAtlasView, VIEW_TYPE_SYMBOL_ATLAS } from "./src/view";
 
 type SortMode = "recent" | "alpha";
 type SymbolSource = "manual" | "note";
@@ -44,6 +46,9 @@ interface SymbolAtlasSettings {
     noteSourceHeading: string;
     noteSourceLastSynced?: number;
     sidebarShowSubtitles: boolean; // default for the sidebar's eye toggle
+    sidebarLayout: SidebarLayout; // default for the sidebar's list/grid toggle
+    sidebarOverview: boolean; // totals + "today" at the top of the sidebar
+    sidebarSummary: boolean; // one short stats line under each symbol
     journalFolder: string; // "" = whole vault
     journalDateFormat: string; // moment-style, e.g. "[Journal] YYYY-MM-DD ddd"
     symbolStats: SymbolStatToggles;
@@ -53,7 +58,7 @@ interface SymbolAtlasSettings {
     dormantDays: number;
 }
 
-// What's shown under each symbol in the sidebar list.
+// What's shown on each symbol's card on the stats page.
 export interface SymbolStatToggles {
     inserted: boolean; // picker/sidebar insert count + last insert
     vaultCount: boolean; // occurrences across all notes
@@ -64,7 +69,7 @@ export interface SymbolStatToggles {
     recentEntries: boolean;
 }
 
-// Whole-journal sections at the top of the sidebar.
+// Whole-journal panels on the stats page.
 export interface JournalStatToggles {
     overview: boolean; // the four totals
     top: boolean; // most-inserted / most-logged chips
@@ -87,6 +92,9 @@ const DEFAULT_SETTINGS: SymbolAtlasSettings = {
     noteSourcePath: "",
     noteSourceHeading: "",
     sidebarShowSubtitles: true,
+    sidebarLayout: "list",
+    sidebarOverview: true,
+    sidebarSummary: true,
     journalFolder: "",
     journalDateFormat: "YYYY-MM-DD",
     symbolStats: {
@@ -135,6 +143,10 @@ export default class SymbolAtlasPlugin extends Plugin {
         this.registerView(
             VIEW_TYPE_SYMBOL_ATLAS,
             (leaf) => new SymbolAtlasView(leaf, this)
+        );
+        this.registerView(
+            VIEW_TYPE_SYMBOL_STATS,
+            (leaf) => new SymbolAtlasStatsView(leaf, this)
         );
 
         // Fires only once the note's cache is actually up to date (unlike
@@ -202,6 +214,13 @@ export default class SymbolAtlasPlugin extends Plugin {
             name: "Open Symbol Atlas sidebar",
             icon: "map",
             callback: () => this.activateView(),
+        });
+
+        this.addCommand({
+            id: "open-symbol-atlas-stats",
+            name: "Open Symbol Atlas stats",
+            icon: "bar-chart-3",
+            callback: () => this.openStatsPage(),
         });
 
         this.addCommand({
@@ -331,6 +350,27 @@ export default class SymbolAtlasPlugin extends Plugin {
         for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_ATLAS)) {
             if (leaf.view instanceof SymbolAtlasView) leaf.view.refresh();
         }
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_STATS)) {
+            if (leaf.view instanceof SymbolAtlasStatsView) leaf.view.refresh();
+        }
+    }
+
+    // Opens the stats page as a tab in the main area, reusing an open one.
+    async openStatsPage() {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_STATS)[0];
+        if (!leaf) {
+            leaf = workspace.getLeaf("tab");
+            await leaf.setViewState({ type: VIEW_TYPE_SYMBOL_STATS, active: true });
+        }
+        await workspace.revealLeaf(leaf);
+    }
+
+    openSettings() {
+        // Undocumented but long-standing API for opening a settings tab.
+        const setting = (this.app as any).setting;
+        setting?.open();
+        setting?.openTabById(this.manifest.id);
     }
 
     async activateView() {
@@ -510,16 +550,28 @@ export default class SymbolAtlasPlugin extends Plugin {
     // sidebar, where focus has moved off the editor. Falls back to the
     // clipboard when no note is open. Returns whether it inserted.
     async insertIntoLastEditor(entry: SymbolEntry): Promise<boolean> {
-        const leaf = this.app.workspace.getMostRecentLeaf();
+        const leaf = this.lastMarkdownLeaf();
         const view = leaf?.view;
-        if (view instanceof MarkdownView && view.getMode() === "source") {
-            this.app.workspace.setActiveLeaf(leaf!, { focus: true });
+        if (leaf && view instanceof MarkdownView && view.getMode() === "source") {
+            this.app.workspace.setActiveLeaf(leaf, { focus: true });
             await this.insertSymbol(view.editor, entry);
             view.editor.focus();
             return true;
         }
         await this.copySymbol(entry, "No note in editing mode — copied");
         return false;
+    }
+
+    // The most recently active note: usually the most recent main-area tab,
+    // but that can be the stats page, so fall back to the markdown tab that
+    // was active last.
+    private lastMarkdownLeaf(): WorkspaceLeaf | null {
+        const recent = this.app.workspace.getMostRecentLeaf();
+        if (recent?.view instanceof MarkdownView) return recent;
+        const leaves = this.app.workspace.getLeavesOfType("markdown");
+        // activeTime is undocumented; without it, any open note will do.
+        const time = (l: WorkspaceLeaf) => (l as unknown as { activeTime?: number }).activeTime ?? 0;
+        return leaves.sort((a, b) => time(b) - time(a))[0] ?? null;
     }
 
     async copySymbol(entry: SymbolEntry, prefix = "Copied") {
@@ -824,18 +876,6 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
             );
 
         new Setting(containerEl)
-            .setName("Show descriptions in sidebar by default")
-            .setDesc(
-                "Whether each symbol's subtitle shows under its name in the sidebar when it opens. The eye button there hides or shows them for the moment."
-            )
-            .addToggle((toggle) =>
-                toggle.setValue(this.plugin.settings.sidebarShowSubtitles).onChange(async (value) => {
-                    this.plugin.settings.sidebarShowSubtitles = value;
-                    await this.plugin.saveSettings();
-                })
-            );
-
-        new Setting(containerEl)
             .setName("Symbol source")
             .setDesc("Manage symbols directly, or mirror them from a list in a note.")
             .addDropdown((dropdown) =>
@@ -1026,6 +1066,7 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 );
         }
 
+        this.renderSidebarSettings(containerEl);
         this.renderJournalSettings(containerEl);
         this.renderStatToggles(containerEl);
 
@@ -1161,6 +1202,51 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
             );
         }
     }
+    private renderSidebarSettings(containerEl: HTMLElement) {
+        const { settings } = this.plugin;
+        containerEl.createEl("h3", { text: "Sidebar" });
+        new Setting(containerEl)
+            .setName("Layout")
+            .setDesc("How symbols are shown in the sidebar when it opens. The grid/list button there switches it for the moment.")
+            .addDropdown((d) =>
+                d
+                    .addOption("list", "List (emoji and name)")
+                    .addOption("grid", "Grid (emoji buttons)")
+                    .setValue(settings.sidebarLayout)
+                    .onChange(async (value) => {
+                        settings.sidebarLayout = value as SidebarLayout;
+                        await this.plugin.saveSettings();
+                    })
+            );
+        new Setting(containerEl)
+            .setName("Show descriptions by default")
+            .setDesc("Show each symbol's subtitle under its name in the list. The eye button there hides or shows them for the moment.")
+            .addToggle((t) =>
+                t.setValue(settings.sidebarShowSubtitles).onChange(async (value) => {
+                    settings.sidebarShowSubtitles = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+        new Setting(containerEl)
+            .setName("Show overview")
+            .setDesc("A few totals at the top, plus what you've logged in today's daily note.")
+            .addToggle((t) =>
+                t.setValue(settings.sidebarOverview).onChange(async (value) => {
+                    settings.sidebarOverview = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+        new Setting(containerEl)
+            .setName("Show a summary under each symbol")
+            .setDesc('One short line in the list, e.g. "34× · last 3d ago". Everything else is on the stats page.')
+            .addToggle((t) =>
+                t.setValue(settings.sidebarSummary).onChange(async (value) => {
+                    settings.sidebarSummary = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+    }
+
     private renderJournalSettings(containerEl: HTMLElement) {
         const { settings } = this.plugin;
         containerEl.createEl("h3", { text: "Journal" });
@@ -1263,7 +1349,11 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                     })
                 );
 
-        containerEl.createEl("h3", { text: "Sidebar: stats under each symbol" });
+        containerEl.createEl("h3", { text: "Stats page: each symbol" });
+        containerEl.createEl("p", {
+            cls: "setting-item-description",
+            text: 'The stats page opens from the sidebar\'s "Open stats" button or the "Open Symbol Atlas stats" command.',
+        });
         const ss = settings.symbolStats;
         toggle(ss, "inserted", "Insert count", "How many times you've inserted it with the picker or sidebar, and when you last did.");
         toggle(ss, "vaultCount", "Count in vault", "How many times it appears across all your notes.");
@@ -1282,16 +1372,16 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 });
             });
 
-        containerEl.createEl("h3", { text: "Sidebar: journal stats" });
+        containerEl.createEl("h3", { text: "Stats page: journal" });
         const js = settings.journalStats;
         toggle(js, "overview", "Overview", "Totals at the top: symbols, entries, journal days, insertions.");
         toggle(js, "top", "Most logged / most inserted", "Your top symbols as small chips.");
-        toggle(js, "heatmap", "Activity heatmap", "Entries per day over the last 26 weeks, for all symbols or one.");
+        toggle(js, "heatmap", "Activity heatmap", "Entries per day over the last year (half a year on narrow screens), for all symbols or one.");
         toggle(js, "trend", "30-day trend", "Biggest changes between the last 30 days and the 30 before.");
         toggle(js, "coverage", "Coverage", "How many daily notes have symbols, and how many per day.");
         toggle(js, "together", "Often logged together", "Pairs of symbols that show up on the same days.");
 
-        containerEl.createEl("h3", { text: "Sidebar: upkeep" });
+        containerEl.createEl("h3", { text: "Stats page: upkeep" });
         const up = settings.upkeep;
         toggle(up, "untracked", "Untracked symbols", "Symbols logged in your notes that aren't in the atlas (typos, or new ones to add).");
         toggle(up, "dormant", "Dormant symbols", "Atlas symbols you haven't logged in a while.");

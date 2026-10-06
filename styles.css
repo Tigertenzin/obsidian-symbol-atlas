@@ -54,7 +54,7 @@
     gap: var(--size-4-2);
 }
 
-@container (max-width: 340px) {
+@container (max-width: 420px) {
     .symbol-atlas-tiles {
         grid-template-columns: repeat(2, 1fr);
     }
@@ -110,7 +110,6 @@
     font-variant-numeric: tabular-nums;
 }
 
-
 .symbol-atlas-meta {
     color: var(--text-muted);
     font-size: var(--font-ui-smaller);
@@ -132,7 +131,17 @@
 
 .symbol-atlas-search {
     flex: 1;
+    min-width: 4.5em;
+}
+
+.symbol-atlas-sort {
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: 45%;
+}
+
+.symbol-atlas-controls > .clickable-icon {
+    flex-shrink: 0;
 }
 
 .symbol-atlas-list {
@@ -154,8 +163,7 @@
     background: var(--background-modifier-hover);
 }
 
-.symbol-atlas-copy,
-.symbol-atlas-subtitle-toggle {
+.symbol-atlas-copy {
     flex-shrink: 0;
 }
 
@@ -173,26 +181,6 @@
 /* The sidebar has room to show a subtitle in full, unlike the picker. */
 .symbol-atlas-row .symbol-atlas-subtitle {
     white-space: normal;
-}
-
-/* Collapsible Journal / Upkeep sections */
-
-.symbol-atlas-section {
-    border-top: 1px solid var(--background-modifier-border);
-    padding-top: var(--size-4-2);
-}
-
-.symbol-atlas-section > summary {
-    cursor: pointer;
-    font-weight: var(--font-semibold);
-    color: var(--text-normal);
-}
-
-.symbol-atlas-section-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--size-4-3);
-    padding-top: var(--size-4-2);
 }
 
 .symbol-atlas-block {
@@ -308,12 +296,6 @@
 
 /* Per-symbol frequency bars: days logged in each of the last 8 weeks. */
 
-.symbol-atlas-freq {
-    display: flex;
-    align-items: center;
-    gap: var(--size-4-2);
-}
-
 .symbol-atlas-bars {
     display: inline-flex;
     align-items: flex-end;
@@ -379,4 +361,181 @@
 
 .symbol-atlas-format-preview.mod-warning {
     color: var(--text-error);
+}
+
+/* Sidebar: stats button and grid layout */
+
+.symbol-atlas-open-stats {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--size-4-2);
+    width: 100%;
+}
+
+.symbol-atlas-open-stats svg {
+    width: var(--icon-s);
+    height: var(--icon-s);
+}
+
+.symbol-atlas-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(2.75em, 1fr));
+    gap: var(--size-4-1);
+}
+
+.symbol-atlas-grid-btn {
+    font-size: 1.35em;
+    height: auto;
+    aspect-ratio: 1;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-secondary);
+    box-shadow: none;
+}
+
+.symbol-atlas-grid-btn.is-multi {
+    grid-column: span 2;
+    aspect-ratio: auto;
+}
+
+.symbol-atlas-grid-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Stats page (main-area tab) */
+
+.symbol-atlas-stats-page {
+    container-type: inline-size;
+    font-size: var(--font-ui-small);
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    max-width: 1100px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.symbol-atlas-page-top {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+}
+
+.symbol-atlas-page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--size-4-2);
+}
+
+.symbol-atlas-page-header h2,
+.symbol-atlas-page-heading h3 {
+    margin: 0;
+}
+
+.symbol-atlas-page-header .symbol-atlas-status {
+    gap: var(--size-4-1);
+}
+
+.symbol-atlas-page-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--size-4-2);
+    margin-top: var(--size-4-2);
+}
+
+.symbol-atlas-page-heading .symbol-atlas-controls {
+    position: static;
+    padding: 0;
+    flex: 1 1 240px;
+    max-width: 420px;
+    min-width: 0;
+}
+
+.symbol-atlas-panels {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--size-4-3);
+}
+
+.symbol-atlas-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-2-3);
+    padding: var(--size-4-3);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    min-width: 0;
+}
+
+.symbol-atlas-panel.is-wide {
+    grid-column: 1 / -1;
+}
+
+.symbol-atlas-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--size-4-3);
+}
+
+.symbol-atlas-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+    padding: var(--size-4-3);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    min-width: 0;
+}
+
+.symbol-atlas-card-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.symbol-atlas-card-head .symbol-atlas-emoji {
+    font-size: 1.6em;
+    line-height: 1.1;
+}
+
+.symbol-atlas-card .symbol-atlas-subtitle {
+    white-space: normal;
+}
+
+.symbol-atlas-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(5.5em, 1fr));
+    gap: var(--size-2-3);
+}
+
+.symbol-atlas-fact-value {
+    font-weight: var(--font-semibold);
+    font-variant-numeric: tabular-nums;
+}
+
+.symbol-atlas-fact-label {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.symbol-atlas-bars.is-large {
+    height: 28px;
+    gap: 3px;
+}
+
+.symbol-atlas-bars.is-large .symbol-atlas-bar {
+    width: auto;
+    flex: 1;
+    border-radius: 2px;
+}
+
+.symbol-atlas-card .symbol-atlas-entries {
+    font-size: var(--font-ui-small);
 }
