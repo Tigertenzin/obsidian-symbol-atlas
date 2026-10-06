@@ -29,3 +29,144 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* Sidebar view */
+
+.symbol-atlas-view {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+}
+
+.symbol-atlas-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+
+.symbol-atlas-tiles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--size-4-2);
+}
+
+@container (max-width: 340px) {
+    .symbol-atlas-tiles {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.symbol-atlas-tile {
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-2) var(--size-4-1);
+    text-align: center;
+    min-width: 0;
+}
+
+.symbol-atlas-tile-value {
+    font-size: 1.3em;
+    font-weight: var(--font-semibold);
+    font-variant-numeric: tabular-nums;
+}
+
+.symbol-atlas-tile-label {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.symbol-atlas-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--size-4-1);
+}
+
+.symbol-atlas-chip-label {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    margin-right: var(--size-4-1);
+}
+
+.symbol-atlas-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-2-2);
+    padding: var(--size-2-1) var(--size-4-2);
+    height: auto;
+    font-size: var(--font-ui-small);
+}
+
+.symbol-atlas-chip-count {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.symbol-atlas-scan-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--size-4-2);
+}
+
+.symbol-atlas-meta {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.symbol-atlas-source {
+    overflow-wrap: anywhere;
+}
+
+.symbol-atlas-controls {
+    display: flex;
+    gap: var(--size-4-2);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--background-primary);
+    padding: var(--size-4-1) 0;
+}
+
+.symbol-atlas-search {
+    flex: 1;
+    min-width: 0;
+}
+
+.symbol-atlas-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.symbol-atlas-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: var(--size-4-2);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+}
+
+.symbol-atlas-row:hover,
+.symbol-atlas-row:focus-visible {
+    background: var(--background-modifier-hover);
+}
+
+.symbol-atlas-copy {
+    flex-shrink: 0;
+}
+
+.symbol-atlas-empty {
+    color: var(--text-muted);
+    padding: var(--size-4-4);
+    text-align: center;
+}
+
+/* The sidebar has room to show a subtitle in full, unlike the picker. */
+.symbol-atlas-row .symbol-atlas-subtitle {
+    white-space: normal;
+}

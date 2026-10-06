@@ -27,7 +27,11 @@ There’s also the option to append a predefined string after the symbol, in my 
 - Add, edit, and delete symbols directly from the settings tab — no manual
   JSON editing required (though import/export JSON is also supported).
 - Selecting a symbol inserts the emoji at your cursor and updates its
-  "last used" timestamp.
+  "last used" timestamp and use count.
+- A **Symbol Atlas sidebar tab** (ribbon map icon, or the "Open Symbol
+  Atlas sidebar" command) with usage statistics and the full, filterable
+  symbol list. Tap a symbol to insert it into the note you were last
+  editing, or use its copy button.
 
 ## How data is stored
 
@@ -70,12 +74,67 @@ list" leaves your most-recently-synced symbols in place as an editable
 starting point.
 
 
+## Sidebar: statistics and full list
+
+Open it from the ribbon (map icon) or the command palette ("Open Symbol
+Atlas sidebar"). It shows:
+- **Totals**: number of symbols, total insertions, how many you've used, and
+  how many you've never used.
+- **Top**: your most-inserted symbols (counted from v1.3 onward; older usage
+  only has a "last used" time).
+- **Scan vault**: on demand, counts how often each symbol appears across
+  your notes (excluding the source note). If you've set a suffix like `::`,
+  it counts `<emoji>::`, which matches how entries are logged and avoids
+  counting 🧠 inside 🧠📺. `⭐` and `⭐️` count as the same symbol.
+- **Full list**: filter by descriptor, subtitle, or emoji name, and sort by
+  recent, A–Z, most used, or vault count. Tap a row to insert it at the
+  cursor of the last note you were editing; on a phone the sidebar closes
+  afterwards so you can see it.
+
 ## Next steps / ideas
 
 - Add tag/category fields to symbols for grouping.
 - Add drag-to-reorder in settings.
 
+## Releasing
+
+1. Bump `version` in `manifest.json` and `package.json`, add a section to
+   the version history below, and run `npm test && npm run build`.
+2. Commit, then push an annotated tag named exactly the version (no `v`),
+   whose message becomes the release notes:
+   ```
+   git tag -a 1.3.0 -F notes.md
+   git push origin 1.3.0
+   ```
+3. The Release workflow builds the plugin and publishes a GitHub release
+   with `main.js`, `manifest.json`, and `styles.css` attached.
+
 ## Version History
+
+### v1.3.0 update: sidebar with stats, more reliable note source on mobile
+
+- **Fix:** the "source note not found" notice that showed on every launch
+  on iPad/iPhone. The startup sync used to run before Obsidian had finished
+  indexing the vault (which takes longer on mobile, especially with
+  iCloud), so the note looked missing even though it existed. The sync now
+  waits until the vault is ready.
+- **Fix:** the source note path and heading are now matched tolerantly:
+  Unicode normalization differences between devices (iOS can store
+  accented characters differently), letter case, a missing `.md`, and a
+  note moved to another folder while the plugin wasn't running (matched by
+  file name when it's unique). When a looser match is found, the saved path
+  is corrected.
+- **Fix:** an edit to the source note made while a sync was already
+  running was dropped; it now re-syncs right after.
+- New sidebar tab with statistics and the full symbol list (see above).
+- Symbols now track how many times they've been inserted.
+- Manually managed symbols can now have a subtitle (add/edit dialogs).
+- The picker also searches subtitles.
+- Note parsing also accepts tab-indented sub-bullets mixed with spaces,
+  task items (`- [ ] 🧭:: …`), and numbered lists (`1. 🧭:: …`).
+- New commands: "Open Symbol Atlas sidebar", "Sync symbols from source
+  note".
+- Copying to the clipboard now reports failures instead of failing silently.
 
 ### v1.2.1 update: symbol subtitles from note sub-bullets
 

@@ -2,25 +2,34 @@ import {
     AbstractInputSuggest,
     App,
     Editor,
+    EventRef,
     FuzzyMatch,
     FuzzySuggestModal,
-    HeadingCache,
+    MarkdownView,
     Modal,
+    Notice,
     Plugin,
     PluginSettingTab,
     Setting,
     TFile,
-    Notice,
+    normalizePath,
 } from "obsidian";
-import { emojiToName } from "gemoji";
-
-interface SymbolEntry {
-    id: string;
-    emoji: string;
-    name: string;
-    subtitle?: string; // optional extra context, shown under the name in the picker
-    lastUsed?: number; // epoch ms, undefined if never used
-}
+import {
+    DEFAULT_SYMBOLS,
+    OccurrenceCounts,
+    SymbolEntry,
+    countOccurrences,
+    extractSection,
+    generateId,
+    getEmojiNames,
+    headingMatches,
+    mergeParsedSymbols,
+    parseImportedSymbols,
+    parseSymbolsFromLines,
+    resolveNotePath,
+    samePath,
+} from "./src/core";
+import { SymbolAtlasView, VIEW_TYPE_SYMBOL_ATLAS } from "./src/view";
 
 type SortMode = "recent" | "alpha";
 type SymbolSource = "manual" | "note";
@@ -35,19 +44,6 @@ interface SymbolAtlasSettings {
     noteSourceLastSynced?: number;
 }
 
-const DEFAULT_SYMBOLS: SymbolEntry[] = [
-    { id: "default-done", emoji: "✅", name: "done / completed" },
-    { id: "default-wip", emoji: "🚧", name: "in progress / work in progress" },
-    { id: "default-warning", emoji: "❗", name: "important / warning" },
-    { id: "default-idea", emoji: "💡", name: "idea" },
-    { id: "default-link", emoji: "🔗", name: "link / reference" },
-    { id: "default-pinned", emoji: "📌", name: "pinned / priority" },
-    { id: "default-bug", emoji: "🐛", name: "bug" },
-    { id: "default-urgent", emoji: "🔥", name: "urgent / hot" },
-    { id: "default-reading", emoji: "📚", name: "reading / book" },
-    { id: "default-game", emoji: "🎮", name: "game / gaming" },
-];
-
 const DEFAULT_SETTINGS: SymbolAtlasSettings = {
     symbols: DEFAULT_SYMBOLS,
     sortMode: "recent",
@@ -57,230 +53,39 @@ const DEFAULT_SETTINGS: SymbolAtlasSettings = {
     noteSourceHeading: "",
 };
 
-// Splits a string into individual emoji "graphemes" (handles multi-emoji
-// combos like "🧠📺" by breaking them into "🧠" and "📺" separately) and
-// looks up each one's official Unicode name via the gemoji dataset.
-function getEmojiNames(emojiStr: string): string {
-    let graphemes: string[];
-    // @ts-ignore - Intl.Segmenter is available in modern Electron/Chromium
-    if (typeof Intl !== "undefined" && (Intl as any).Segmenter) {
-        // @ts-ignore
-        const segmenter = new (Intl as any).Segmenter("en", {
-            granularity: "grapheme",
-        });
-        graphemes = Array.from(segmenter.segment(emojiStr), (s: any) => s.segment);
-    } else {
-        graphemes = Array.from(emojiStr);
-    }
+// How long the startup sync waits for the source note to show up in the
+// vault index before giving up and reporting it missing. Mobile vaults
+// (especially iCloud-backed ones) can take a while to finish indexing.
+const STARTUP_SYNC_TIMEOUT_MS = 30_000;
 
-    const names: string[] = [];
-    for (const g of graphemes) {
-        const name = (emojiToName as Record<string, string>)[g];
-        if (name && !names.includes(name)) {
-            names.push(name);
-        }
-    }
-    return names.join(" ");
-}
-
-function generateId(): string {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-        return crypto.randomUUID();
-    }
-    return `sym-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-// Builds one validated SymbolEntry from an arbitrary parsed JSON value.
-// Throws a descriptive Error on the first problem found so import can fail
-// fast with an actionable message instead of silently admitting bad data.
-function toImportedSymbol(
-    raw: unknown,
-    index: number,
-    seenIds: Set<string>
-): SymbolEntry {
-    if (typeof raw !== "object" || raw === null) {
-        throw new Error(`Entry ${index + 1} is not a valid object.`);
-    }
-    const obj = raw as Record<string, unknown>;
-
-    const emoji = typeof obj.emoji === "string" ? obj.emoji.trim() : "";
-    if (!emoji) {
-        throw new Error(`Entry ${index + 1} is missing a valid "emoji".`);
-    }
-    const name = typeof obj.name === "string" ? obj.name.trim() : "";
-    if (!name) {
-        throw new Error(`Entry ${index + 1} is missing a valid "name".`);
-    }
-
-    // Preserve an imported id for clean export/import round-trips, as long
-    // as it's not already claimed by an earlier entry in this same batch.
-    // Old (pre-1.2) exports have no id at all, so falling back to a fresh
-    // one here is also what makes those imports still work.
-    const candidateId = typeof obj.id === "string" ? obj.id.trim() : "";
-    const id = candidateId && !seenIds.has(candidateId) ? candidateId : generateId();
-    seenIds.add(id);
-
-    const entry: SymbolEntry = { id, emoji, name };
-    if (typeof obj.subtitle === "string" && obj.subtitle.trim()) {
-        entry.subtitle = obj.subtitle.trim();
-    }
-    if (typeof obj.lastUsed === "number" && Number.isFinite(obj.lastUsed)) {
-        entry.lastUsed = obj.lastUsed;
-    }
-    return entry;
-}
-
-// Parses and validates a full import payload. Rejects the whole batch (no
-// partial/silent-skip) if anything is malformed, since a bad paste almost
-// always means the whole paste is wrong, not just one entry.
-function parseImportedSymbols(text: string): SymbolEntry[] {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(text);
-    } catch {
-        throw new Error("Invalid JSON. Import failed.");
-    }
-    if (!Array.isArray(parsed)) {
-        throw new Error("Expected a JSON array of symbols.");
-    }
-    const seenIds = new Set<string>();
-    return parsed.map((raw, index) => toImportedSymbol(raw, index, seenIds));
-}
-
-interface ParsedSymbol {
-    emoji: string;
-    name: string;
-    subtitle?: string;
-}
-
-// Finds the H2 heading matching headingText and returns the raw lines
-// strictly between it and the next heading of level <= 2 (or EOF). Always
-// slices the raw, unmodified file content (frontmatter included) — Heading
-// positions are 0-based line indexes into that exact string, so stripping
-// anything beforehand would throw off every line number.
-function extractSection(
-    content: string,
-    headings: HeadingCache[],
-    headingText: string
-): string[] | null {
-    const target = headings.find(
-        (h) => h.level === 2 && h.heading.trim() === headingText.trim()
-    );
-    if (!target) return null;
-
-    const idx = headings.indexOf(target);
-    let boundaryLine: number | null = null;
-    for (let i = idx + 1; i < headings.length; i++) {
-        if (headings[i].level <= 2) {
-            boundaryLine = headings[i].position.start.line;
-            break;
-        }
-    }
-
-    const lines = content.split("\n");
-    const startLine = target.position.start.line + 1;
-    const endLine = boundaryLine === null ? lines.length : boundaryLine;
-    return lines.slice(startLine, endLine);
-}
-
-interface ListStackFrame {
-    indent: number;
-    symbol: ParsedSymbol | null; // set only when this line is itself a "::" symbol
-}
-
-// Matches list-item lines at any nesting depth and splits each "::" line
-// into {emoji, name}. A line WITHOUT "::" becomes a subtitle fragment on
-// its direct parent bullet, but only if that parent is itself a "::" line
-// (multiple such children join with a space, in document order) — it does
-// NOT bubble further up, and a "::" line nested under a non-"::" line is
-// still its own independent symbol either way. Indentation is tracked via
-// a small stack so this works regardless of nesting depth or how deeply a
-// "::" line's own children are indented.
-function parseSymbolsFromLines(lines: string[]): ParsedSymbol[] {
-    const out: ParsedSymbol[] = [];
-    const listItemRe = /^(\s*)[-*+]\s+(.*)$/;
-    const stack: ListStackFrame[] = [];
-
-    for (const line of lines) {
-        const match = listItemRe.exec(line);
-        if (!match) continue;
-        const indent = match[1].length;
-        const text = match[2];
-
-        while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
-            stack.pop();
-        }
-        const parent = stack.length > 0 ? stack[stack.length - 1] : null;
-
-        const sep = text.indexOf("::");
-        if (sep !== -1) {
-            const emoji = text.slice(0, sep).trim();
-            const name = text.slice(sep + 2).trim();
-            if (emoji && name) {
-                const symbol: ParsedSymbol = { emoji, name };
-                out.push(symbol);
-                stack.push({ indent, symbol });
-                continue;
-            }
-            // Malformed "::" line (empty emoji or name) — drop it, same as
-            // before, but still track it so its own children don't
-            // misattach to a grandparent's subtitle.
-            stack.push({ indent, symbol: null });
-            continue;
-        }
-
-        if (parent?.symbol) {
-            const trimmed = text.trim();
-            if (trimmed) {
-                parent.symbol.subtitle = parent.symbol.subtitle
-                    ? `${parent.symbol.subtitle} ${trimmed}`
-                    : trimmed;
-            }
-        }
-        stack.push({ indent, symbol: null });
-    }
-    return out;
-}
-
-// Reconciles a freshly-parsed symbol list against the previous one so a
-// re-sync never resets usage history: entries are matched to existing ones
-// by emoji (a FIFO queue per emoji handles duplicates without special
-// casing), preserving id/lastUsed on a match. Existing entries whose emoji
-// no longer appears are dropped — the note is the source of truth once in
-// note mode, so a removed line should disappear from the picker too.
-function mergeParsedSymbols(
-    parsed: ParsedSymbol[],
-    existing: SymbolEntry[]
-): SymbolEntry[] {
-    const pool = new Map<string, SymbolEntry[]>();
-    for (const e of existing) {
-        if (!pool.has(e.emoji)) pool.set(e.emoji, []);
-        pool.get(e.emoji)!.push(e);
-    }
-    return parsed.map(({ emoji, name, subtitle }) => {
-        const match = pool.get(emoji)?.shift();
-        const entry: SymbolEntry = match
-            ? { id: match.id, emoji, name, lastUsed: match.lastUsed }
-            : { id: generateId(), emoji, name };
-        if (subtitle) entry.subtitle = subtitle;
-        return entry;
-    });
+export interface VaultScan {
+    scannedAt: number;
+    noteCount: number;
+    counts: Map<string, OccurrenceCounts>; // keyed by SymbolEntry.id
 }
 
 export default class SymbolAtlasPlugin extends Plugin {
     settings: SymbolAtlasSettings;
+    vaultScan: VaultScan | null = null;
+    vaultScanInProgress = false;
     private syncDebounceTimer: number | null = null;
     private syncInFlight = false;
+    private syncQueued = false;
 
     async onload() {
         await this.loadSettings();
+
+        this.registerView(
+            VIEW_TYPE_SYMBOL_ATLAS,
+            (leaf) => new SymbolAtlasView(leaf, this)
+        );
 
         // Fires only once the note's cache is actually up to date (unlike
         // vault "modify", which fires before the async re-index finishes).
         this.registerEvent(
             this.app.metadataCache.on("changed", (file) => {
                 if (this.settings.symbolSource !== "note") return;
-                if (file.path !== this.settings.noteSourcePath) return;
+                if (!samePath(file.path, this.settings.noteSourcePath)) return;
                 if (this.syncDebounceTimer !== null) {
                     window.clearTimeout(this.syncDebounceTimer);
                 }
@@ -294,18 +99,23 @@ export default class SymbolAtlasPlugin extends Plugin {
         // Keep the configured path pointed at the note if it gets moved/renamed.
         this.registerEvent(
             this.app.vault.on("rename", (file, oldPath) => {
-                if (this.settings.noteSourcePath !== oldPath) return;
+                if (!samePath(this.settings.noteSourcePath, oldPath)) return;
                 this.settings.noteSourcePath = file.path;
                 this.saveSettings();
             })
         );
 
-        if (this.settings.symbolSource === "note") {
-            // Not awaited: I/O shouldn't block command/settings-tab
-            // registration, and every syncFromNote() error path Notices
-            // and returns rather than throwing.
-            this.syncFromNote({ silent: true });
-        }
+        // Deferred until the workspace is ready: during onload() — on mobile
+        // in particular — the vault's file list and metadata cache are often
+        // still being populated, so looking the note up then reports it
+        // "not found" even though it exists.
+        this.app.workspace.onLayoutReady(() => {
+            if (this.settings.symbolSource === "note") {
+                // Not awaited: every syncFromNote() error path Notices and
+                // returns rather than throwing.
+                this.startupSync();
+            }
+        });
 
         this.addCommand({
             id: "open-symbol-atlas-picker",
@@ -322,17 +132,43 @@ export default class SymbolAtlasPlugin extends Plugin {
             ],
         });
 
+        this.addCommand({
+            id: "open-symbol-atlas-sidebar",
+            name: "Open Symbol Atlas sidebar",
+            icon: "map",
+            callback: () => this.activateView(),
+        });
+
+        this.addCommand({
+            id: "sync-symbol-atlas-from-note",
+            name: "Sync symbols from source note",
+            icon: "refresh-cw",
+            checkCallback: (checking) => {
+                if (this.settings.symbolSource !== "note") return false;
+                if (!checking) this.syncFromNote();
+                return true;
+            },
+        });
+
+        this.addRibbonIcon("map", "Open Symbol Atlas", () => this.activateView());
+
         this.addSettingTab(new SymbolAtlasSettingTab(this.app, this));
     }
 
-    onunload() {}
+    onunload() {
+        if (this.syncDebounceTimer !== null) {
+            window.clearTimeout(this.syncDebounceTimer);
+        }
+    }
 
     async loadSettings() {
         const loaded = await this.loadData();
         const merged: SymbolAtlasSettings = Object.assign({}, DEFAULT_SETTINGS, loaded);
         // Clone so we never hold a live reference into the shared
         // DEFAULT_SYMBOLS module-level objects.
-        merged.symbols = (merged.symbols ?? DEFAULT_SYMBOLS).map((s) => ({ ...s }));
+        merged.symbols = (Array.isArray(merged.symbols) ? merged.symbols : DEFAULT_SYMBOLS).map(
+            (s) => ({ ...s })
+        );
         this.settings = merged;
 
         // Backfill ids for any entry saved before this field existed
@@ -360,59 +196,156 @@ export default class SymbolAtlasPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        this.refreshViews();
+    }
+
+    refreshViews() {
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_ATLAS)) {
+            if (leaf.view instanceof SymbolAtlasView) leaf.view.refresh();
+        }
+    }
+
+    async activateView() {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_ATLAS)[0];
+        if (!leaf) {
+            const right = workspace.getRightLeaf(false);
+            if (!right) return;
+            await right.setViewState({ type: VIEW_TYPE_SYMBOL_ATLAS, active: true });
+            leaf = right;
+        }
+        await workspace.revealLeaf(leaf);
+    }
+
+    // Looks up the configured source note, tolerating paths that don't match
+    // the vault byte-for-byte (see resolveNotePath). When a looser match is
+    // found, the stored path is corrected so later lookups and the "changed"
+    // listener hit it directly.
+    resolveSourceFile(): TFile | null {
+        const stored = this.settings.noteSourcePath;
+        if (!stored) return null;
+        const direct = this.app.vault.getFileByPath(normalizePath(stored));
+        if (direct) return direct;
+
+        const resolved = resolveNotePath(
+            stored,
+            this.app.vault.getMarkdownFiles().map((f) => f.path)
+        );
+        const file = resolved ? this.app.vault.getFileByPath(resolved) : null;
+        if (file && file.path !== stored) {
+            this.settings.noteSourcePath = file.path;
+            this.saveSettings();
+        }
+        return file;
+    }
+
+    // Startup variant of syncFromNote(): if the note (or its metadata) isn't
+    // indexed yet, waits for the vault to catch up instead of immediately
+    // reporting it missing.
+    private async startupSync() {
+        const ready = () => {
+            const file = this.resolveSourceFile();
+            return !!file && !!this.app.metadataCache.getFileCache(file);
+        };
+        if (!ready()) {
+            await this.waitFor(ready, STARTUP_SYNC_TIMEOUT_MS);
+        }
+        await this.syncFromNote({ silent: true });
+    }
+
+    // Resolves once check() passes (re-tested on every vault/metadata event)
+    // or after timeoutMs, whichever comes first.
+    private waitFor(check: () => boolean, timeoutMs: number): Promise<void> {
+        return new Promise((resolve) => {
+            const refs: EventRef[] = [];
+            let timer = 0;
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                window.clearTimeout(timer);
+                for (const ref of refs) this.app.metadataCache.offref(ref);
+                resolve();
+            };
+            const test = () => {
+                if (check()) finish();
+            };
+            refs.push(this.app.metadataCache.on("changed", test));
+            refs.push(this.app.metadataCache.on("resolved", test));
+            timer = window.setTimeout(finish, timeoutMs);
+            // Also release the wait if the plugin is unloaded meanwhile.
+            this.register(finish);
+        });
     }
 
     // Re-parses the configured note+heading and merges the result into
     // settings.symbols. Every failure path Notices and returns WITHOUT
     // touching settings.symbols — a typo'd path/heading, or a heading that
     // temporarily has no matching list items, must never silently wipe the
-    // user's list. Never calls render() itself: a background sync firing
-    // mid-keystroke in the settings tab's note-picker field would otherwise
-    // blow away that input (render() empties and rebuilds the whole tab).
+    // user's list. Never calls the settings tab's render() itself: a
+    // background sync firing mid-keystroke in its note-picker field would
+    // otherwise blow away that input. A sync requested while one is already
+    // running is queued and runs right after, so the last edit always wins.
     async syncFromNote(options?: { silent?: boolean }): Promise<void> {
-        if (this.syncInFlight) return;
+        if (this.syncInFlight) {
+            this.syncQueued = true;
+            return;
+        }
         this.syncInFlight = true;
         try {
-            const silent = options?.silent ?? false;
-            const { symbolSource, noteSourcePath, noteSourceHeading } = this.settings;
-            if (symbolSource !== "note" || !noteSourcePath || !noteSourceHeading) {
-                return;
-            }
-
-            const file = this.app.vault.getFileByPath(noteSourcePath);
-            if (!file) {
-                new Notice(`Symbol Atlas: source note not found: "${noteSourcePath}"`);
-                return;
-            }
-
-            const content = await this.app.vault.cachedRead(file);
-            const headings = this.app.metadataCache.getFileCache(file)?.headings ?? [];
-            const lines = extractSection(content, headings, noteSourceHeading);
-            if (lines === null) {
-                new Notice(
-                    `Symbol Atlas: heading "${noteSourceHeading}" not found in "${noteSourcePath}"`
-                );
-                return;
-            }
-
-            const parsed = parseSymbolsFromLines(lines);
-            if (parsed.length === 0) {
-                new Notice(
-                    `Symbol Atlas: no "emoji:: descriptor" list items found under "${noteSourceHeading}". Existing symbols were not changed.`
-                );
-                return;
-            }
-
-            this.settings.symbols = mergeParsedSymbols(parsed, this.settings.symbols);
-            this.settings.noteSourceLastSynced = Date.now();
-            await this.saveSettings();
-            if (!silent) {
-                new Notice(
-                    `Symbol Atlas: synced ${parsed.length} symbols from "${noteSourcePath}".`
-                );
-            }
+            await this.doSyncFromNote(options?.silent ?? false);
         } finally {
             this.syncInFlight = false;
+        }
+        if (this.syncQueued) {
+            this.syncQueued = false;
+            await this.syncFromNote({ silent: true });
+        }
+    }
+
+    private async doSyncFromNote(silent: boolean): Promise<void> {
+        const { symbolSource, noteSourcePath, noteSourceHeading } = this.settings;
+        if (symbolSource !== "note" || !noteSourcePath || !noteSourceHeading) {
+            return;
+        }
+
+        const file = this.resolveSourceFile();
+        if (!file) {
+            new Notice(`Symbol Atlas: source note not found: "${noteSourcePath}"`);
+            return;
+        }
+
+        const cache = this.app.metadataCache.getFileCache(file);
+        if (!cache) {
+            // Not indexed yet; the "changed" listener re-syncs once it is.
+            if (!silent) {
+                new Notice(`Symbol Atlas: "${file.path}" is still being indexed. Try again in a moment.`);
+            }
+            return;
+        }
+
+        const content = await this.app.vault.cachedRead(file);
+        const lines = extractSection(content, cache.headings ?? [], noteSourceHeading);
+        if (lines === null) {
+            new Notice(
+                `Symbol Atlas: heading "${noteSourceHeading}" not found in "${file.path}"`
+            );
+            return;
+        }
+
+        const parsed = parseSymbolsFromLines(lines);
+        if (parsed.length === 0) {
+            new Notice(
+                `Symbol Atlas: no "emoji:: descriptor" list items found under "${noteSourceHeading}". Existing symbols were not changed.`
+            );
+            return;
+        }
+
+        this.settings.symbols = mergeParsedSymbols(parsed, this.settings.symbols);
+        this.settings.noteSourceLastSynced = Date.now();
+        await this.saveSettings();
+        if (!silent) {
+            new Notice(`Symbol Atlas: synced ${parsed.length} symbols from "${file.path}".`);
         }
     }
 
@@ -435,7 +368,79 @@ export default class SymbolAtlasPlugin extends Plugin {
         const target = this.settings.symbols.find((s) => s.id === entry.id);
         if (target) {
             target.lastUsed = Date.now();
+            target.useCount = (target.useCount ?? 0) + 1;
             await this.saveSettings();
+        }
+    }
+
+    async insertSymbol(editor: Editor, entry: SymbolEntry) {
+        editor.replaceSelection(entry.emoji + this.settings.symbolSuffix);
+        await this.markUsed(entry);
+    }
+
+    // Inserts into the note the user was last editing — used from the
+    // sidebar, where focus has moved off the editor. Falls back to the
+    // clipboard when no note is open. Returns whether it inserted.
+    async insertIntoLastEditor(entry: SymbolEntry): Promise<boolean> {
+        const leaf = this.app.workspace.getMostRecentLeaf();
+        const view = leaf?.view;
+        if (view instanceof MarkdownView && view.getMode() === "source") {
+            this.app.workspace.setActiveLeaf(leaf!, { focus: true });
+            await this.insertSymbol(view.editor, entry);
+            view.editor.focus();
+            return true;
+        }
+        await this.copySymbol(entry, "No note in editing mode — copied");
+        return false;
+    }
+
+    async copySymbol(entry: SymbolEntry, prefix = "Copied") {
+        try {
+            await navigator.clipboard.writeText(entry.emoji + this.settings.symbolSuffix);
+            new Notice(`${prefix} ${entry.emoji} to clipboard.`);
+        } catch {
+            new Notice("Symbol Atlas: couldn't access the clipboard.");
+        }
+    }
+
+    // Counts each symbol's occurrences across every note in the vault (except
+    // the source note, which lists them all by definition). When a suffix
+    // like "::" is configured, "<emoji><suffix>" is counted, which matches
+    // how symbols are actually logged and avoids counting 🧠 inside 🧠📺.
+    async scanVault() {
+        if (this.vaultScanInProgress) return;
+        this.vaultScanInProgress = true;
+        this.refreshViews();
+        try {
+            const symbols = [...this.settings.symbols];
+            const suffix = this.settings.symbolSuffix.trim();
+            const needles = symbols.map((s) => s.emoji + suffix);
+            const totals = symbols.map(() => ({ total: 0, notes: 0 }));
+            const files = this.app.vault
+                .getMarkdownFiles()
+                .filter((f) => !samePath(f.path, this.settings.noteSourcePath));
+
+            for (let i = 0; i < files.length; i++) {
+                const text = await this.app.vault.cachedRead(files[i]);
+                countOccurrences(text, needles).forEach((n, j) => {
+                    if (n > 0) {
+                        totals[j].total += n;
+                        totals[j].notes++;
+                    }
+                });
+                // Yield now and then so a large vault doesn't freeze the UI.
+                if (i % 50 === 49) await new Promise((r) => window.setTimeout(r, 0));
+            }
+
+            const counts = new Map<string, OccurrenceCounts>();
+            symbols.forEach((s, j) => counts.set(s.id, totals[j]));
+            this.vaultScan = { scannedAt: Date.now(), noteCount: files.length, counts };
+        } catch (e) {
+            console.error("Symbol Atlas: vault scan failed", e);
+            new Notice("Symbol Atlas: vault scan failed. See the console for details.");
+        } finally {
+            this.vaultScanInProgress = false;
+            this.refreshViews();
         }
     }
 }
@@ -461,11 +466,12 @@ class SymbolPickerModal extends FuzzySuggestModal<SymbolEntry> {
     }
 
     // This is what FuzzySuggestModal actually searches against. Combining
-    // the descriptor with the emoji's real Unicode name (e.g. "brain",
-    // "television") lets users find a symbol by either one.
+    // the descriptor with the subtitle and the emoji's real Unicode name
+    // (e.g. "brain", "television") lets users find a symbol by any of them.
     getItemText(item: SymbolEntry): string {
-        const emojiNames = getEmojiNames(item.emoji);
-        return emojiNames ? `${item.name} ${emojiNames}` : item.name;
+        return [item.name, item.subtitle, getEmojiNames(item.emoji)]
+            .filter((part) => !!part)
+            .join(" ");
     }
 
     renderSuggestion(match: FuzzyMatch<SymbolEntry>, el: HTMLElement) {
@@ -481,8 +487,7 @@ class SymbolPickerModal extends FuzzySuggestModal<SymbolEntry> {
     }
 
     async onChooseItem(item: SymbolEntry) {
-        this.editor.replaceSelection(item.emoji + this.plugin.settings.symbolSuffix);
-        await this.plugin.markUsed(item);
+        await this.plugin.insertSymbol(this.editor, item);
         new Notice(`Inserted ${item.emoji} (${item.name})`);
     }
 }
@@ -543,23 +548,23 @@ class ConfirmModal extends Modal {
     }
 }
 
+interface SymbolEditResult {
+    emoji: string;
+    name: string;
+    subtitle: string;
+}
+
 // Replaces the old window.prompt()-based edit flow: a real Modal works
 // reliably on mobile, and lets you fix a mistyped emoji, not just the
 // descriptor.
 class SymbolEditModal extends Modal {
-    onSubmit: (result: { emoji: string; name: string }) => void;
-    emojiValue: string;
-    nameValue: string;
+    onSubmit: (result: SymbolEditResult) => void;
+    value: SymbolEditResult;
 
-    constructor(
-        app: App,
-        entry: SymbolEntry,
-        onSubmit: (result: { emoji: string; name: string }) => void
-    ) {
+    constructor(app: App, entry: SymbolEntry, onSubmit: (result: SymbolEditResult) => void) {
         super(app);
         this.onSubmit = onSubmit;
-        this.emojiValue = entry.emoji;
-        this.nameValue = entry.name;
+        this.value = { emoji: entry.emoji, name: entry.name, subtitle: entry.subtitle ?? "" };
     }
 
     onOpen() {
@@ -568,16 +573,25 @@ class SymbolEditModal extends Modal {
         contentEl.createEl("h2", { text: "Edit symbol" });
 
         new Setting(contentEl).setName("Emoji").addText((text) =>
-            text.setValue(this.emojiValue).onChange((value) => {
-                this.emojiValue = value.trim();
+            text.setValue(this.value.emoji).onChange((value) => {
+                this.value.emoji = value.trim();
             })
         );
 
         new Setting(contentEl).setName("Descriptor").addText((text) =>
-            text.setValue(this.nameValue).onChange((value) => {
-                this.nameValue = value.trim();
+            text.setValue(this.value.name).onChange((value) => {
+                this.value.name = value.trim();
             })
         );
+
+        new Setting(contentEl)
+            .setName("Subtitle")
+            .setDesc("Optional extra context shown under the descriptor.")
+            .addText((text) =>
+                text.setValue(this.value.subtitle).onChange((value) => {
+                    this.value.subtitle = value.trim();
+                })
+            );
 
         const buttonRow = new Setting(contentEl);
         buttonRow.addButton((button) =>
@@ -588,13 +602,13 @@ class SymbolEditModal extends Modal {
                 .setButtonText("Save")
                 .setCta()
                 .onClick(() => {
-                    if (!this.emojiValue || !this.nameValue) {
+                    if (!this.value.emoji || !this.value.name) {
                         new Notice(
                             "Please provide both an emoji and a descriptor."
                         );
                         return;
                     }
-                    this.onSubmit({ emoji: this.emojiValue, name: this.nameValue });
+                    this.onSubmit({ ...this.value });
                     this.close();
                 })
         );
@@ -731,10 +745,13 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
 
             let newEmoji = "";
             let newName = "";
+            let newSubtitle = "";
 
             const addSetting = new Setting(containerEl)
                 .setName("New symbol")
-                .setDesc("Enter an emoji and a descriptive name, then click Add.");
+                .setDesc(
+                    "Enter an emoji and a descriptive name (plus an optional subtitle), then click Add."
+                );
 
             addSetting.addText((text) =>
                 text
@@ -752,6 +769,12 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                     })
             );
 
+            addSetting.addText((text) =>
+                text.setPlaceholder("Subtitle (optional)").onChange((value) => {
+                    newSubtitle = value.trim();
+                })
+            );
+
             addSetting.addButton((button) =>
                 button
                     .setButtonText("Add")
@@ -761,11 +784,13 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                             new Notice("Please provide both an emoji and a descriptor.");
                             return;
                         }
-                        this.plugin.settings.symbols.push({
+                        const entry: SymbolEntry = {
                             id: generateId(),
                             emoji: newEmoji,
                             name: newName,
-                        });
+                        };
+                        if (newSubtitle) entry.subtitle = newSubtitle;
+                        this.plugin.settings.symbols.push(entry);
                         await this.plugin.saveSettings();
                         new Notice(`Added ${newEmoji} (${newName})`);
                         this.render();
@@ -789,17 +814,17 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                     });
                 });
 
-            const currentFile = this.plugin.settings.noteSourcePath
-                ? this.app.vault.getFileByPath(this.plugin.settings.noteSourcePath)
-                : null;
+            const currentFile = this.plugin.resolveSourceFile();
             const headings = currentFile
                 ? (this.app.metadataCache.getFileCache(currentFile)?.headings ?? []).filter(
                       (h) => h.level === 2
                   )
                 : [];
             const configuredHeading = this.plugin.settings.noteSourceHeading;
-            const headingMissing =
-                !!configuredHeading && !headings.some((h) => h.heading === configuredHeading);
+            const matchedHeading = headings.find((h) =>
+                headingMatches(h.heading, configuredHeading)
+            );
+            const headingMissing = !!configuredHeading && !matchedHeading;
 
             new Setting(containerEl)
                 .setName("Heading")
@@ -822,7 +847,7 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                     for (const h of headings) {
                         dropdown.addOption(h.heading, h.heading);
                     }
-                    dropdown.setValue(configuredHeading);
+                    dropdown.setValue(matchedHeading?.heading ?? configuredHeading);
                     dropdown.setDisabled(!currentFile || headings.length === 0);
                     dropdown.onChange(async (value) => {
                         const wouldReplace = this.plugin.settings.symbols.length > 0;
@@ -871,13 +896,13 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
         const sorted = this.plugin.getSortedSymbols();
 
         sorted.forEach((entry) => {
+            const lastUsed = entry.lastUsed
+                ? `Last used: ${new Date(entry.lastUsed).toLocaleString()}`
+                : "Never used";
+            const usage = entry.useCount ? `Used ${entry.useCount}× · ${lastUsed}` : lastUsed;
             const row = new Setting(containerEl)
                 .setName(`${entry.emoji}  ${entry.name}`)
-                .setDesc(
-                    entry.lastUsed
-                        ? `Last used: ${new Date(entry.lastUsed).toLocaleString()}`
-                        : "Never used"
-                );
+                .setDesc(entry.subtitle ? `${entry.subtitle} — ${usage}` : usage);
 
             if (this.plugin.settings.symbolSource === "manual") {
                 row.addButton((button) =>
@@ -892,6 +917,8 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                                 if (target) {
                                     target.emoji = result.emoji;
                                     target.name = result.name;
+                                    if (result.subtitle) target.subtitle = result.subtitle;
+                                    else delete target.subtitle;
                                     await this.plugin.saveSettings();
                                     this.render();
                                 }
@@ -930,10 +957,14 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
             .setDesc("Copies your full symbol list to the clipboard.")
             .addButton((button) =>
                 button.setButtonText("Copy JSON").onClick(async () => {
-                    await navigator.clipboard.writeText(
-                        JSON.stringify(this.plugin.settings.symbols, null, 2)
-                    );
-                    new Notice("Symbol Atlas copied to clipboard.");
+                    try {
+                        await navigator.clipboard.writeText(
+                            JSON.stringify(this.plugin.settings.symbols, null, 2)
+                        );
+                        new Notice("Symbol Atlas copied to clipboard.");
+                    } catch {
+                        new Notice("Symbol Atlas: couldn't access the clipboard.");
+                    }
                 })
             );
 
