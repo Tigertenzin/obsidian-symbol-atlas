@@ -12,13 +12,13 @@ import {
     PluginSettingTab,
     Setting,
     TFile,
+    TFolder,
+    WorkspaceLeaf,
     normalizePath,
 } from "obsidian";
 import {
     DEFAULT_SYMBOLS,
-    OccurrenceCounts,
     SymbolEntry,
-    countOccurrences,
     extractSection,
     generateId,
     getEmojiNames,
@@ -29,7 +29,10 @@ import {
     resolveNotePath,
     samePath,
 } from "./src/core";
-import { SymbolAtlasView, VIEW_TYPE_SYMBOL_ATLAS } from "./src/view";
+import { SymbolIndex } from "./src/indexer";
+import { JournalStats, aggregate, compileDateFormat, journalDater } from "./src/stats";
+import { SymbolAtlasStatsView, VIEW_TYPE_SYMBOL_STATS } from "./src/statsView";
+import { SidebarLayout, SymbolAtlasView, VIEW_TYPE_SYMBOL_ATLAS } from "./src/view";
 
 type SortMode = "recent" | "alpha";
 type SymbolSource = "manual" | "note";
@@ -42,6 +45,43 @@ interface SymbolAtlasSettings {
     noteSourcePath: string;
     noteSourceHeading: string;
     noteSourceLastSynced?: number;
+    sidebarShowSubtitles: boolean; // default for the sidebar's eye toggle
+    sidebarLayout: SidebarLayout; // default for the sidebar's list/grid toggle
+    sidebarOverview: boolean; // totals + "today" at the top of the sidebar
+    sidebarSummary: boolean; // one short stats line under each symbol
+    journalFolder: string; // "" = whole vault
+    journalDateFormat: string; // moment-style, e.g. "[Journal] YYYY-MM-DD ddd"
+    symbolStats: SymbolStatToggles;
+    recentEntriesCount: number;
+    journalStats: JournalStatToggles;
+    upkeep: UpkeepToggles;
+    dormantDays: number;
+}
+
+// What's shown on each symbol's card on the stats page.
+export interface SymbolStatToggles {
+    inserted: boolean; // picker/sidebar insert count + last insert
+    vaultCount: boolean; // occurrences across all notes
+    lastLogged: boolean; // newest daily note containing it
+    frequency: boolean; // days in the last 30 + 8-week bars
+    streaks: boolean;
+    weekday: boolean; // weekday it leans towards
+    recentEntries: boolean;
+}
+
+// Whole-journal panels on the stats page.
+export interface JournalStatToggles {
+    overview: boolean; // the four totals
+    top: boolean; // most-inserted / most-logged chips
+    heatmap: boolean;
+    trend: boolean; // last 30 days vs the 30 before
+    coverage: boolean;
+    together: boolean; // symbols logged on the same days
+}
+
+export interface UpkeepToggles {
+    untracked: boolean;
+    dormant: boolean;
 }
 
 const DEFAULT_SETTINGS: SymbolAtlasSettings = {
@@ -51,6 +91,35 @@ const DEFAULT_SETTINGS: SymbolAtlasSettings = {
     symbolSource: "manual",
     noteSourcePath: "",
     noteSourceHeading: "",
+    sidebarShowSubtitles: true,
+    sidebarLayout: "list",
+    sidebarOverview: true,
+    sidebarSummary: true,
+    journalFolder: "",
+    journalDateFormat: "YYYY-MM-DD",
+    symbolStats: {
+        inserted: true,
+        vaultCount: true,
+        lastLogged: true,
+        frequency: true,
+        streaks: true,
+        weekday: false,
+        recentEntries: false,
+    },
+    recentEntriesCount: 3,
+    journalStats: {
+        overview: true,
+        top: true,
+        heatmap: true,
+        trend: true,
+        coverage: true,
+        together: false,
+    },
+    upkeep: {
+        untracked: true,
+        dormant: true,
+    },
+    dormantDays: 60,
 };
 
 // How long the startup sync waits for the source note to show up in the
@@ -58,32 +127,33 @@ const DEFAULT_SETTINGS: SymbolAtlasSettings = {
 // (especially iCloud-backed ones) can take a while to finish indexing.
 const STARTUP_SYNC_TIMEOUT_MS = 30_000;
 
-export interface VaultScan {
-    scannedAt: number;
-    noteCount: number;
-    counts: Map<string, OccurrenceCounts>; // keyed by SymbolEntry.id
-}
-
 export default class SymbolAtlasPlugin extends Plugin {
     settings: SymbolAtlasSettings;
-    vaultScan: VaultScan | null = null;
-    vaultScanInProgress = false;
+    index: SymbolIndex;
+    private statsCache: JournalStats | null = null;
+    private rebuildTimer: number | null = null;
     private syncDebounceTimer: number | null = null;
     private syncInFlight = false;
     private syncQueued = false;
 
     async onload() {
         await this.loadSettings();
+        this.index = new SymbolIndex(this);
 
         this.registerView(
             VIEW_TYPE_SYMBOL_ATLAS,
             (leaf) => new SymbolAtlasView(leaf, this)
         );
+        this.registerView(
+            VIEW_TYPE_SYMBOL_STATS,
+            (leaf) => new SymbolAtlasStatsView(leaf, this)
+        );
 
         // Fires only once the note's cache is actually up to date (unlike
         // vault "modify", which fires before the async re-index finishes).
         this.registerEvent(
-            this.app.metadataCache.on("changed", (file) => {
+            this.app.metadataCache.on("changed", (file, data) => {
+                this.index.noteChanged(file, data);
                 if (this.settings.symbolSource !== "note") return;
                 if (!samePath(file.path, this.settings.noteSourcePath)) return;
                 if (this.syncDebounceTimer !== null) {
@@ -99,6 +169,7 @@ export default class SymbolAtlasPlugin extends Plugin {
         // Keep the configured path pointed at the note if it gets moved/renamed.
         this.registerEvent(
             this.app.vault.on("rename", (file, oldPath) => {
+                this.index.noteRenamed(oldPath, file.path);
                 if (!samePath(this.settings.noteSourcePath, oldPath)) return;
                 this.settings.noteSourcePath = file.path;
                 this.saveSettings();
@@ -109,7 +180,13 @@ export default class SymbolAtlasPlugin extends Plugin {
         // in particular — the vault's file list and metadata cache are often
         // still being populated, so looking the note up then reports it
         // "not found" even though it exists.
+        this.registerEvent(
+            this.app.vault.on("delete", (file) => this.index.noteDeleted(file.path))
+        );
+
         this.app.workspace.onLayoutReady(() => {
+            // Load the saved index, then catch up on anything edited since.
+            this.index.load().then(() => this.index.build());
             if (this.settings.symbolSource === "note") {
                 // Not awaited: every syncFromNote() error path Notices and
                 // returns rather than throwing.
@@ -140,6 +217,13 @@ export default class SymbolAtlasPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: "open-symbol-atlas-stats",
+            name: "Open Symbol Atlas stats",
+            icon: "bar-chart-3",
+            callback: () => this.openStatsPage(),
+        });
+
+        this.addCommand({
             id: "sync-symbol-atlas-from-note",
             name: "Sync symbols from source note",
             icon: "refresh-cw",
@@ -159,6 +243,10 @@ export default class SymbolAtlasPlugin extends Plugin {
         if (this.syncDebounceTimer !== null) {
             window.clearTimeout(this.syncDebounceTimer);
         }
+        if (this.rebuildTimer !== null) {
+            window.clearTimeout(this.rebuildTimer);
+        }
+        this.index.dispose();
     }
 
     async loadSettings() {
@@ -169,6 +257,11 @@ export default class SymbolAtlasPlugin extends Plugin {
         merged.symbols = (Array.isArray(merged.symbols) ? merged.symbols : DEFAULT_SYMBOLS).map(
             (s) => ({ ...s })
         );
+        // Nested groups are merged key by key so a toggle added in a later
+        // version gets its default instead of disappearing.
+        merged.symbolStats = { ...DEFAULT_SETTINGS.symbolStats, ...loaded?.symbolStats };
+        merged.journalStats = { ...DEFAULT_SETTINGS.journalStats, ...loaded?.journalStats };
+        merged.upkeep = { ...DEFAULT_SETTINGS.upkeep, ...loaded?.upkeep };
         this.settings = merged;
 
         // Backfill ids for any entry saved before this field existed
@@ -196,13 +289,88 @@ export default class SymbolAtlasPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        this.statsCache = null;
+        // Entries are found by their suffix, so a new suffix means re-reading
+        // notes. Debounced: this runs on every keystroke in that setting.
+        if (this.index?.ready && this.settings.symbolSuffix.trim() !== this.index.indexedSuffix) {
+            if (this.rebuildTimer !== null) window.clearTimeout(this.rebuildTimer);
+            this.rebuildTimer = window.setTimeout(() => {
+                this.rebuildTimer = null;
+                this.index.build();
+            }, 1500);
+        }
         this.refreshViews();
+    }
+
+    onIndexUpdated() {
+        this.statsCache = null;
+        this.refreshViews();
+    }
+
+    // Journal statistics over the current index, recomputed only after the
+    // index or the settings change. The source note is left out: it lists
+    // every symbol by definition.
+    getStats(): JournalStats {
+        if (!this.statsCache) {
+            const source = this.settings.symbolSource === "note" ? this.settings.noteSourcePath : "";
+            const notes = this.index.entries().filter((n) => !source || !samePath(n.path, source));
+            this.statsCache = aggregate(
+                notes,
+                this.settings.symbols,
+                journalDater(this.settings.journalFolder, this.settings.journalDateFormat)
+            );
+        }
+        return this.statsCache;
+    }
+
+    rebuildIndex() {
+        return this.index.build({ force: true });
+    }
+
+    // From the sidebar's "untracked symbols": add one to the atlas. In note
+    // mode the note is the source of truth, so open it instead.
+    addSymbolFromToken(token: string) {
+        if (this.settings.symbolSource === "note") {
+            const file = this.resolveSourceFile();
+            if (file) this.app.workspace.getLeaf(false).openFile(file);
+            new Notice(`Add "${token}${this.settings.symbolSuffix.trim()} <descriptor>" under "${this.settings.noteSourceHeading}" to track it.`);
+            return;
+        }
+        const draft: SymbolEntry = { id: generateId(), emoji: token, name: "" };
+        new SymbolEditModal(this.app, draft, async (result) => {
+            const entry: SymbolEntry = { id: draft.id, emoji: result.emoji, name: result.name };
+            if (result.subtitle) entry.subtitle = result.subtitle;
+            this.settings.symbols.push(entry);
+            await this.saveSettings();
+            new Notice(`Added ${entry.emoji} (${entry.name})`);
+        }, "Add symbol").open();
     }
 
     refreshViews() {
         for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_ATLAS)) {
             if (leaf.view instanceof SymbolAtlasView) leaf.view.refresh();
         }
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_STATS)) {
+            if (leaf.view instanceof SymbolAtlasStatsView) leaf.view.refresh();
+        }
+    }
+
+    // Opens the stats page as a tab in the main area, reusing an open one.
+    async openStatsPage() {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE_SYMBOL_STATS)[0];
+        if (!leaf) {
+            leaf = workspace.getLeaf("tab");
+            await leaf.setViewState({ type: VIEW_TYPE_SYMBOL_STATS, active: true });
+        }
+        await workspace.revealLeaf(leaf);
+    }
+
+    openSettings() {
+        // Undocumented but long-standing API for opening a settings tab.
+        const setting = (this.app as any).setting;
+        setting?.open();
+        setting?.openTabById(this.manifest.id);
     }
 
     async activateView() {
@@ -382,10 +550,10 @@ export default class SymbolAtlasPlugin extends Plugin {
     // sidebar, where focus has moved off the editor. Falls back to the
     // clipboard when no note is open. Returns whether it inserted.
     async insertIntoLastEditor(entry: SymbolEntry): Promise<boolean> {
-        const leaf = this.app.workspace.getMostRecentLeaf();
+        const leaf = this.lastMarkdownLeaf();
         const view = leaf?.view;
-        if (view instanceof MarkdownView && view.getMode() === "source") {
-            this.app.workspace.setActiveLeaf(leaf!, { focus: true });
+        if (leaf && view instanceof MarkdownView && view.getMode() === "source") {
+            this.app.workspace.setActiveLeaf(leaf, { focus: true });
             await this.insertSymbol(view.editor, entry);
             view.editor.focus();
             return true;
@@ -394,53 +562,24 @@ export default class SymbolAtlasPlugin extends Plugin {
         return false;
     }
 
+    // The most recently active note: usually the most recent main-area tab,
+    // but that can be the stats page, so fall back to the markdown tab that
+    // was active last.
+    private lastMarkdownLeaf(): WorkspaceLeaf | null {
+        const recent = this.app.workspace.getMostRecentLeaf();
+        if (recent?.view instanceof MarkdownView) return recent;
+        const leaves = this.app.workspace.getLeavesOfType("markdown");
+        // activeTime is undocumented; without it, any open note will do.
+        const time = (l: WorkspaceLeaf) => (l as unknown as { activeTime?: number }).activeTime ?? 0;
+        return leaves.sort((a, b) => time(b) - time(a))[0] ?? null;
+    }
+
     async copySymbol(entry: SymbolEntry, prefix = "Copied") {
         try {
             await navigator.clipboard.writeText(entry.emoji + this.settings.symbolSuffix);
             new Notice(`${prefix} ${entry.emoji} to clipboard.`);
         } catch {
             new Notice("Symbol Atlas: couldn't access the clipboard.");
-        }
-    }
-
-    // Counts each symbol's occurrences across every note in the vault (except
-    // the source note, which lists them all by definition). When a suffix
-    // like "::" is configured, "<emoji><suffix>" is counted, which matches
-    // how symbols are actually logged and avoids counting 🧠 inside 🧠📺.
-    async scanVault() {
-        if (this.vaultScanInProgress) return;
-        this.vaultScanInProgress = true;
-        this.refreshViews();
-        try {
-            const symbols = [...this.settings.symbols];
-            const suffix = this.settings.symbolSuffix.trim();
-            const needles = symbols.map((s) => s.emoji + suffix);
-            const totals = symbols.map(() => ({ total: 0, notes: 0 }));
-            const files = this.app.vault
-                .getMarkdownFiles()
-                .filter((f) => !samePath(f.path, this.settings.noteSourcePath));
-
-            for (let i = 0; i < files.length; i++) {
-                const text = await this.app.vault.cachedRead(files[i]);
-                countOccurrences(text, needles).forEach((n, j) => {
-                    if (n > 0) {
-                        totals[j].total += n;
-                        totals[j].notes++;
-                    }
-                });
-                // Yield now and then so a large vault doesn't freeze the UI.
-                if (i % 50 === 49) await new Promise((r) => window.setTimeout(r, 0));
-            }
-
-            const counts = new Map<string, OccurrenceCounts>();
-            symbols.forEach((s, j) => counts.set(s.id, totals[j]));
-            this.vaultScan = { scannedAt: Date.now(), noteCount: files.length, counts };
-        } catch (e) {
-            console.error("Symbol Atlas: vault scan failed", e);
-            new Notice("Symbol Atlas: vault scan failed. See the console for details.");
-        } finally {
-            this.vaultScanInProgress = false;
-            this.refreshViews();
         }
     }
 }
@@ -561,8 +700,16 @@ class SymbolEditModal extends Modal {
     onSubmit: (result: SymbolEditResult) => void;
     value: SymbolEditResult;
 
-    constructor(app: App, entry: SymbolEntry, onSubmit: (result: SymbolEditResult) => void) {
+    title: string;
+
+    constructor(
+        app: App,
+        entry: SymbolEntry,
+        onSubmit: (result: SymbolEditResult) => void,
+        title = "Edit symbol"
+    ) {
         super(app);
+        this.title = title;
         this.onSubmit = onSubmit;
         this.value = { emoji: entry.emoji, name: entry.name, subtitle: entry.subtitle ?? "" };
     }
@@ -570,7 +717,7 @@ class SymbolEditModal extends Modal {
     onOpen() {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.createEl("h2", { text: "Edit symbol" });
+        contentEl.createEl("h2", { text: this.title });
 
         new Setting(contentEl).setName("Emoji").addText((text) =>
             text.setValue(this.value.emoji).onChange((value) => {
@@ -648,6 +795,34 @@ class NoteSuggest extends AbstractInputSuggest<TFile> {
         this.setValue(file.path);
         this.close();
         this.onPick(file);
+    }
+}
+
+class FolderSuggest extends AbstractInputSuggest<TFolder> {
+    onPick: (folder: TFolder) => void;
+
+    constructor(app: App, inputEl: HTMLInputElement, onPick: (folder: TFolder) => void) {
+        super(app, inputEl);
+        this.onPick = onPick;
+        this.limit = 20;
+    }
+
+    protected getSuggestions(query: string): TFolder[] {
+        const q = query.toLowerCase();
+        return this.app.vault
+            .getAllLoadedFiles()
+            .filter((f): f is TFolder => f instanceof TFolder && !f.isRoot() && f.path.toLowerCase().includes(q))
+            .sort((a, b) => a.path.localeCompare(b.path));
+    }
+
+    renderSuggestion(folder: TFolder, el: HTMLElement): void {
+        el.setText(folder.path);
+    }
+
+    selectSuggestion(folder: TFolder): void {
+        this.setValue(folder.path);
+        this.close();
+        this.onPick(folder);
     }
 }
 
@@ -891,6 +1066,10 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 );
         }
 
+        this.renderSidebarSettings(containerEl);
+        this.renderJournalSettings(containerEl);
+        this.renderStatToggles(containerEl);
+
         containerEl.createEl("h3", { text: "Existing symbols" });
 
         const sorted = this.plugin.getSortedSymbols();
@@ -1022,5 +1201,202 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                 'Symbols are managed from the configured note above. Switch to "Manual list" to add, edit, delete, or import symbols directly.'
             );
         }
+    }
+    private renderSidebarSettings(containerEl: HTMLElement) {
+        const { settings } = this.plugin;
+        containerEl.createEl("h3", { text: "Sidebar" });
+        new Setting(containerEl)
+            .setName("Layout")
+            .setDesc("How symbols are shown in the sidebar when it opens. The grid/list button there switches it for the moment.")
+            .addDropdown((d) =>
+                d
+                    .addOption("list", "List (emoji and name)")
+                    .addOption("grid", "Grid (emoji buttons)")
+                    .setValue(settings.sidebarLayout)
+                    .onChange(async (value) => {
+                        settings.sidebarLayout = value as SidebarLayout;
+                        await this.plugin.saveSettings();
+                    })
+            );
+        new Setting(containerEl)
+            .setName("Show descriptions by default")
+            .setDesc("Show each symbol's subtitle under its name in the list. The eye button there hides or shows them for the moment.")
+            .addToggle((t) =>
+                t.setValue(settings.sidebarShowSubtitles).onChange(async (value) => {
+                    settings.sidebarShowSubtitles = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+        new Setting(containerEl)
+            .setName("Show overview")
+            .setDesc("A few totals at the top, plus what you've logged in today's daily note.")
+            .addToggle((t) =>
+                t.setValue(settings.sidebarOverview).onChange(async (value) => {
+                    settings.sidebarOverview = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+        new Setting(containerEl)
+            .setName("Show a summary under each symbol")
+            .setDesc('One short line in the list, e.g. "34× · last 3d ago". Everything else is on the stats page.')
+            .addToggle((t) =>
+                t.setValue(settings.sidebarSummary).onChange(async (value) => {
+                    settings.sidebarSummary = value;
+                    await this.plugin.saveSettings();
+                })
+            );
+    }
+
+    private renderJournalSettings(containerEl: HTMLElement) {
+        const { settings } = this.plugin;
+        containerEl.createEl("h3", { text: "Journal" });
+        containerEl.createEl("p", {
+            cls: "setting-item-description",
+            text:
+                "Date-based stats (last logged, streaks, heatmap, …) come from your daily notes. Tell the plugin where they live and how they're named, so each note's date can be read from its file name.",
+        });
+
+        let preview: HTMLElement;
+        const updatePreview = () => {
+            const dateOf = journalDater(settings.journalFolder, settings.journalDateFormat);
+            const matched = this.app.vault
+                .getMarkdownFiles()
+                .map((f) => ({ f, date: dateOf(f.path) }))
+                .filter((x): x is { f: TFile; date: string } => x.date !== null)
+                .sort((a, b) => b.date.localeCompare(a.date));
+            preview.empty();
+            if (!compileDateFormat(settings.journalDateFormat)) {
+                preview.setText("The format needs a year (YYYY), month (MM, MMM…) and day (DD, D, Do).");
+                preview.addClass("mod-warning");
+                return;
+            }
+            preview.removeClass("mod-warning");
+            if (matched.length === 0) {
+                preview.setText("No notes match yet. Check the folder and format.");
+                preview.addClass("mod-warning");
+                return;
+            }
+            const newest = matched[0];
+            preview.setText(
+                `Matches ${matched.length} note${matched.length === 1 ? "" : "s"}. Newest: "${newest.f.basename}" → ${newest.date}`
+            );
+        };
+
+        new Setting(containerEl)
+            .setName("Daily notes folder")
+            .setDesc("Where your daily notes are (subfolders included). Leave blank to look through the whole vault.")
+            .addText((text) => {
+                text.setPlaceholder("e.g. 05 - Journal").setValue(settings.journalFolder);
+                const save = async (value: string) => {
+                    settings.journalFolder = value.trim().replace(/^\/+|\/+$/g, "");
+                    await this.plugin.saveSettings();
+                    updatePreview();
+                };
+                text.onChange(save);
+                new FolderSuggest(this.app, text.inputEl, (folder) => {
+                    text.setValue(folder.path);
+                    save(folder.path);
+                });
+            });
+
+        const formatSetting = new Setting(containerEl)
+            .setName("Daily note filename format")
+            .addText((text) =>
+                text
+                    .setPlaceholder("YYYY-MM-DD")
+                    .setValue(settings.journalDateFormat)
+                    .onChange(async (value) => {
+                        settings.journalDateFormat = value.trim();
+                        await this.plugin.saveSettings();
+                        updatePreview();
+                    })
+            );
+        const desc = formatSetting.descEl;
+        desc.appendText("Same syntax as the Daily Notes plugin: YYYY year, MM / M / MMM / MMMM month, DD / D / Do day, ddd / dddd weekday; put other words in [brackets]. For example, ");
+        desc.createEl("code", { text: "[Journal] YYYY-MM-DD ddd" });
+        desc.appendText(" matches “Journal 2026-10-05 Mon”.");
+        preview = desc.createDiv({ cls: "symbol-atlas-format-preview" });
+
+        // Offer the core Daily Notes plugin's own folder/format when it's on.
+        const dailyNotes = (this.app as any).internalPlugins?.getPluginById?.("daily-notes");
+        const dn = dailyNotes?.enabled ? dailyNotes.instance?.options : null;
+        if (dn) {
+            new Setting(containerEl)
+                .setName("Use Daily Notes settings")
+                .setDesc(`Copy the folder ("${dn.folder || "/"}") and format ("${dn.format || "YYYY-MM-DD"}") from the Daily Notes core plugin.`)
+                .addButton((button) =>
+                    button.setButtonText("Copy").onClick(async () => {
+                        settings.journalFolder = (dn.folder ?? "").replace(/^\/+|\/+$/g, "");
+                        settings.journalDateFormat = dn.format || "YYYY-MM-DD";
+                        await this.plugin.saveSettings();
+                        this.render();
+                    })
+                );
+        }
+        updatePreview();
+    }
+
+    private renderStatToggles(containerEl: HTMLElement) {
+        const { settings } = this.plugin;
+        const toggle = <T extends object>(group: T, key: keyof T & string, name: string, desc: string) =>
+            new Setting(containerEl)
+                .setName(name)
+                .setDesc(desc)
+                .addToggle((t) =>
+                    t.setValue(group[key] as unknown as boolean).onChange(async (value) => {
+                        (group as Record<string, unknown>)[key] = value;
+                        await this.plugin.saveSettings();
+                    })
+                );
+
+        containerEl.createEl("h3", { text: "Stats page: each symbol" });
+        containerEl.createEl("p", {
+            cls: "setting-item-description",
+            text: 'The stats page opens from the sidebar\'s "Open stats" button or the "Open Symbol Atlas stats" command.',
+        });
+        const ss = settings.symbolStats;
+        toggle(ss, "inserted", "Insert count", "How many times you've inserted it with the picker or sidebar, and when you last did.");
+        toggle(ss, "vaultCount", "Count in vault", "How many times it appears across all your notes.");
+        toggle(ss, "lastLogged", "Last logged", "The newest daily note it appears in.");
+        toggle(ss, "frequency", "Frequency", "Days logged in the last 30, with bars for each of the last 8 weeks.");
+        toggle(ss, "streaks", "Streaks", "Current and longest run of consecutive days.");
+        toggle(ss, "weekday", "Weekday pattern", "The weekday it's most often logged on, when there's a clear one.");
+        toggle(ss, "recentEntries", "Recent entries", "The latest lines logged with it, with links to their daily notes.");
+        new Setting(containerEl)
+            .setName("Recent entries to show")
+            .addDropdown((d) => {
+                for (const n of [1, 2, 3, 5, 10]) d.addOption(String(n), String(n));
+                d.setValue(String(settings.recentEntriesCount)).onChange(async (value) => {
+                    settings.recentEntriesCount = Number(value);
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        containerEl.createEl("h3", { text: "Stats page: journal" });
+        const js = settings.journalStats;
+        toggle(js, "overview", "Overview", "Totals at the top: symbols, entries, journal days, insertions.");
+        toggle(js, "top", "Most logged / most inserted", "Your top symbols as small chips.");
+        toggle(js, "heatmap", "Activity heatmap", "Entries per day over the last year (half a year on narrow screens), for all symbols or one.");
+        toggle(js, "trend", "30-day trend", "Biggest changes between the last 30 days and the 30 before.");
+        toggle(js, "coverage", "Coverage", "How many daily notes have symbols, and how many per day.");
+        toggle(js, "together", "Often logged together", "Pairs of symbols that show up on the same days.");
+
+        containerEl.createEl("h3", { text: "Stats page: upkeep" });
+        const up = settings.upkeep;
+        toggle(up, "untracked", "Untracked symbols", "Symbols logged in your notes that aren't in the atlas (typos, or new ones to add).");
+        toggle(up, "dormant", "Dormant symbols", "Atlas symbols you haven't logged in a while.");
+        new Setting(containerEl)
+            .setName("Dormant after")
+            .setDesc("Days without an entry before a symbol counts as dormant.")
+            .addText((text) => {
+                text.inputEl.type = "number";
+                text.inputEl.min = "1";
+                text.setValue(String(settings.dormantDays)).onChange(async (value) => {
+                    const n = Math.round(Number(value));
+                    if (!Number.isFinite(n) || n < 1) return;
+                    settings.dormantDays = n;
+                    await this.plugin.saveSettings();
+                });
+            });
     }
 }

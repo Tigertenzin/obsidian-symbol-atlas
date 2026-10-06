@@ -1,8 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    computeUsageStats,
-    countOccurrences,
     extractSection,
     mergeParsedSymbols,
     parseImportedSymbols,
@@ -84,22 +82,4 @@ test("parseImportedSymbols round-trips useCount and rejects bad entries", () => 
     const [e] = parseImportedSymbols('[{"id":"a","emoji":"⭐","name":"n","useCount":4}]');
     assert.equal(e.useCount, 4);
     assert.throws(() => parseImportedSymbols('[{"emoji":"⭐"}]'), /name/);
-});
-
-test("countOccurrences ignores variation selectors and respects suffix", () => {
-    const text = "⭐️:: did a thing\n⭐:: another\n🧠📺:: tv\n🧠:: think";
-    assert.deepEqual(countOccurrences(text, ["⭐::", "🧠::", "🧠📺::"]), [2, 1, 1]);
-});
-
-test("computeUsageStats", () => {
-    const s = computeUsageStats([
-        { id: "a", emoji: "a", name: "a", useCount: 2, lastUsed: 10 },
-        { id: "b", emoji: "b", name: "b", lastUsed: 20 },
-        { id: "c", emoji: "c", name: "c" },
-    ]);
-    assert.equal(s.totalInsertions, 2);
-    assert.equal(s.usedCount, 2);
-    assert.equal(s.neverUsedCount, 1);
-    assert.deepEqual(s.mostUsed.map((x) => x.id), ["a"]);
-    assert.deepEqual(s.recentlyUsed.map((x) => x.id), ["b", "a"]);
 });

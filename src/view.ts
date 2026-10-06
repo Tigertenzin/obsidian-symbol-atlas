@@ -1,32 +1,49 @@
 import { ItemView, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type SymbolAtlasPlugin from "../main";
-import {
-    OccurrenceCounts,
-    SymbolEntry,
-    computeUsageStats,
-    formatRelative,
-    getEmojiNames,
-} from "./core";
+import { SymbolEntry, getEmojiNames } from "./core";
+import { JournalStats, dayNumber, localToday, symbolKey } from "./stats";
+import { chip, daysAgo } from "./viewUtils";
 
 export const VIEW_TYPE_SYMBOL_ATLAS = "symbol-atlas-view";
 
-type ListSort = "recent" | "alpha" | "most-used" | "vault";
+function graphemeCount(s: string): number {
+    const Segmenter = (Intl as any).Segmenter;
+    if (Segmenter) return Array.from(new Segmenter("en", { granularity: "grapheme" }).segment(s)).length;
+    return Array.from(s.replace(/\uFE0F|\u200D./gu, "")).length;
+}
 
-// Right-sidebar tab: usage statistics at the top, then the full symbol list.
-// Tapping a row inserts that symbol into the most recently active note.
+type ListSort = "recent" | "alpha" | "logged" | "vault";
+export type SidebarLayout = "list" | "grid";
+
+// Right-sidebar tab, kept light: a few broad numbers, a button to the full
+// stats page, and the symbols as quick-insert rows or a grid of buttons.
+// Tapping a symbol inserts it into the most recently active note.
 export class SymbolAtlasView extends ItemView {
     plugin: SymbolAtlasPlugin;
     private query = "";
     private sort: ListSort;
+    // Descriptions and layout start from the settings defaults; the buttons
+    // next to the filter change them for this view only.
+    private showSubtitles: boolean;
+    private layout: SidebarLayout;
+    private defaults: { subtitles: boolean; layout: SidebarLayout };
     // Rebuilt on every refresh. The search box lives outside these so typing
-    // in it never loses focus when a background sync re-renders the view.
-    private statsEl: HTMLElement;
+    // in it never loses focus when a background update re-renders the view.
+    private topEl: HTMLElement;
     private listEl: HTMLElement;
+    private subtitleToggle: HTMLElement;
+    private layoutToggle: HTMLElement;
 
     constructor(leaf: WorkspaceLeaf, plugin: SymbolAtlasPlugin) {
         super(leaf);
         this.plugin = plugin;
         this.sort = plugin.settings.sortMode;
+        this.defaults = {
+            subtitles: plugin.settings.sidebarShowSubtitles,
+            layout: plugin.settings.sidebarLayout,
+        };
+        this.showSubtitles = this.defaults.subtitles;
+        this.layout = this.defaults.layout;
     }
 
     getViewType(): string {
@@ -46,13 +63,13 @@ export class SymbolAtlasView extends ItemView {
         root.empty();
         root.addClass("symbol-atlas-view");
 
-        this.statsEl = root.createDiv({ cls: "symbol-atlas-stats" });
+        this.topEl = root.createDiv({ cls: "symbol-atlas-top" });
 
         const controls = root.createDiv({ cls: "symbol-atlas-controls" });
         const search = controls.createEl("input", {
             type: "search",
             cls: "symbol-atlas-search",
-            attr: { placeholder: "Filter symbols…", "aria-label": "Filter symbols" },
+            attr: { placeholder: "Filter…", "aria-label": "Filter symbols" },
         });
         search.value = this.query;
         search.addEventListener("input", () => {
@@ -67,19 +84,30 @@ export class SymbolAtlasView extends ItemView {
         const sortOptions: [ListSort, string][] = [
             ["recent", "Recent"],
             ["alpha", "A–Z"],
-            ["most-used", "Most used"],
-            ["vault", "In vault"],
+            ["vault", "Most logged"],
+            ["logged", "Last logged"],
         ];
         for (const [value, label] of sortOptions) {
             sortSelect.createEl("option", { value, text: label });
         }
-        sortSelect.value = this.sort;
+        sortSelect.value = this.sort === "recent" || this.sort === "alpha" ? this.sort : "recent";
         sortSelect.addEventListener("change", () => {
             this.sort = sortSelect.value as ListSort;
             this.renderList();
         });
 
-        this.listEl = root.createDiv({ cls: "symbol-atlas-list" });
+        this.layoutToggle = controls.createDiv({ cls: "clickable-icon" });
+        this.layoutToggle.addEventListener("click", () => {
+            this.layout = this.layout === "list" ? "grid" : "list";
+            this.renderList();
+        });
+        this.subtitleToggle = controls.createDiv({ cls: "clickable-icon" });
+        this.subtitleToggle.addEventListener("click", () => {
+            this.showSubtitles = !this.showSubtitles;
+            this.renderList();
+        });
+
+        this.listEl = root.createDiv();
         this.refresh();
     }
 
@@ -88,122 +116,92 @@ export class SymbolAtlasView extends ItemView {
     }
 
     refresh() {
-        if (!this.statsEl || !this.listEl) return;
-        this.renderStats();
+        if (!this.topEl || !this.listEl) return;
+        // Changed defaults in settings reset the per-view toggles.
+        const { sidebarShowSubtitles, sidebarLayout } = this.plugin.settings;
+        if (sidebarShowSubtitles !== this.defaults.subtitles) {
+            this.defaults.subtitles = sidebarShowSubtitles;
+            this.showSubtitles = sidebarShowSubtitles;
+        }
+        if (sidebarLayout !== this.defaults.layout) {
+            this.defaults.layout = sidebarLayout;
+            this.layout = sidebarLayout;
+        }
+        this.renderTop();
         this.renderList();
     }
 
-    private renderStats() {
-        const el = this.statsEl;
+    private renderTop() {
+        const el = this.topEl;
         el.empty();
-        const { settings } = this.plugin;
-        const stats = computeUsageStats(settings.symbols);
+        const { settings, index } = this.plugin;
+        const stats = this.plugin.getStats();
+        const today = localToday();
 
-        const tiles = el.createDiv({ cls: "symbol-atlas-tiles" });
-        const tile = (value: number | string, label: string) => {
-            const t = tiles.createDiv({ cls: "symbol-atlas-tile" });
-            t.createDiv({ cls: "symbol-atlas-tile-value", text: String(value) });
-            t.createDiv({ cls: "symbol-atlas-tile-label", text: label });
-        };
-        tile(stats.symbolCount, "symbols");
-        tile(stats.totalInsertions, "insertions");
-        tile(stats.usedCount, "used");
-        tile(stats.neverUsedCount, "never used");
-
-        if (stats.mostUsed.length > 0) {
-            const row = el.createDiv({ cls: "symbol-atlas-chip-row" });
-            row.createSpan({ cls: "symbol-atlas-chip-label", text: "Top" });
-            for (const s of stats.mostUsed) {
-                this.chip(row, s, `${s.useCount}×`);
+        if (settings.sidebarOverview) {
+            let entries = 0;
+            for (const s of stats.bySymbol.values()) entries += s.total;
+            const tiles = el.createDiv({ cls: "symbol-atlas-tiles" });
+            const tile = (value: number, label: string, tip: string) => {
+                const t = tiles.createDiv({ cls: "symbol-atlas-tile", attr: { "aria-label": tip } });
+                t.createDiv({ cls: "symbol-atlas-tile-value", text: value.toLocaleString() });
+                t.createDiv({ cls: "symbol-atlas-tile-label", text: label });
+            };
+            tile(settings.symbols.length, "symbols", "Symbols in your atlas");
+            tile(entries, "entries", "Times atlas symbols appear in your notes");
+            if (stats.journalDates.size > 0) {
+                tile(this.loggedThisWeek(stats, today), "this week", "Entries in daily notes over the last 7 days");
+                tile(stats.journalDates.size, "journal days", "Daily notes found");
+            } else {
+                const insertions = settings.symbols.reduce((sum, s) => sum + (s.useCount ?? 0), 0);
+                tile(insertions, "insertions", "Symbols inserted with the picker or sidebar");
+                tile(index.noteCount, "notes", "Notes indexed");
             }
-        }
 
-        // Vault occurrence counts are expensive (they read every note), so
-        // they're only computed when asked for and kept in memory after.
-        const scan = this.plugin.vaultScan;
-        if (scan) {
-            const top = settings.symbols
-                .map((s) => ({ s, c: scan.counts.get(s.id)?.total ?? 0 }))
-                .filter((x) => x.c > 0)
-                .sort((a, b) => b.c - a.c)
-                .slice(0, 5);
-            if (top.length > 0) {
+            const todays = stats.daySymbols.get(today);
+            if (stats.journalDates.has(today)) {
                 const row = el.createDiv({ cls: "symbol-atlas-chip-row" });
-                row.createSpan({ cls: "symbol-atlas-chip-label", text: "In vault" });
-                for (const { s, c } of top) this.chip(row, s, String(c));
+                row.createSpan({ cls: "symbol-atlas-chip-label", text: "Today" });
+                const logged = settings.symbols.filter((s) => todays?.has(symbolKey(s.emoji)));
+                if (logged.length === 0) row.createSpan({ cls: "symbol-atlas-meta", text: "nothing logged yet" });
+                for (const s of logged) chip(row, s);
             }
         }
-        const scanRow = el.createDiv({ cls: "symbol-atlas-scan-row" });
-        if (scan) {
-            scanRow.createSpan({
-                cls: "symbol-atlas-meta",
-                text: `Scanned ${scan.noteCount} notes ${formatRelative(scan.scannedAt)}`,
-            });
-        } else {
-            scanRow.createSpan({
-                cls: "symbol-atlas-meta",
-                text: "Count how often each symbol appears in your notes.",
-            });
-        }
-        const scanBtn = scanRow.createEl("button", {
-            text: this.plugin.vaultScanInProgress
-                ? "Scanning…"
-                : scan
-                ? "Rescan"
-                : "Scan vault",
-        });
-        scanBtn.disabled = this.plugin.vaultScanInProgress;
-        scanBtn.addEventListener("click", async () => {
-            await this.plugin.scanVault();
-        });
 
-        const source = el.createDiv({ cls: "symbol-atlas-meta symbol-atlas-source" });
-        if (settings.symbolSource === "note" && settings.noteSourcePath) {
-            source.appendText("Source: ");
-            const link = source.createEl("a", {
-                text: `${settings.noteSourcePath} › ${settings.noteSourceHeading || "?"}`,
-                href: "#",
-            });
-            link.addEventListener("click", (evt) => {
-                evt.preventDefault();
-                this.app.workspace.openLinkText(settings.noteSourcePath, "", false);
-            });
-            if (settings.noteSourceLastSynced) {
-                source.appendText(` · synced ${formatRelative(settings.noteSourceLastSynced)}`);
-            }
-        } else {
-            source.setText("Source: manual list (edit in settings)");
-        }
+        const open = el.createEl("button", { cls: "symbol-atlas-open-stats" });
+        setIcon(open.createSpan(), "bar-chart-3");
+        open.createSpan({ text: "Open stats" });
+        open.addEventListener("click", () => this.plugin.openStatsPage());
     }
 
-    private chip(parent: HTMLElement, s: SymbolEntry, count: string) {
-        const chip = parent.createEl("button", {
-            cls: "symbol-atlas-chip",
-            attr: { "aria-label": `Insert ${s.emoji} ${s.name}` },
-        });
-        chip.createSpan({ text: s.emoji });
-        chip.createSpan({ cls: "symbol-atlas-chip-count", text: count });
-        chip.addEventListener("click", () => this.insert(s));
+    private loggedThisWeek(stats: JournalStats, today: string): number {
+        const end = dayNumber(today);
+        let n = 0;
+        for (const [date, count] of stats.dayTotals) {
+            const ago = end - dayNumber(date);
+            if (ago >= 0 && ago < 7) n += count;
+        }
+        return n;
     }
 
-    private sortedFiltered(): SymbolEntry[] {
-        const scan = this.plugin.vaultScan;
+    private sortedFiltered(stats: JournalStats): SymbolEntry[] {
         const q = this.query.trim().toLowerCase();
         const symbols = this.plugin.settings.symbols.filter((s) => {
             if (!q) return true;
             const hay = `${s.emoji} ${s.name} ${s.subtitle ?? ""} ${getEmojiNames(s.emoji)}`;
             return hay.toLowerCase().includes(q);
         });
+        const st = (s: SymbolEntry) => stats.bySymbol.get(symbolKey(s.emoji));
         const byName = (a: SymbolEntry, b: SymbolEntry) => a.name.localeCompare(b.name);
         const keyed = (key: (s: SymbolEntry) => number) => (a: SymbolEntry, b: SymbolEntry) =>
             key(b) - key(a) || byName(a, b);
         switch (this.sort) {
             case "alpha":
                 return symbols.sort(byName);
-            case "most-used":
-                return symbols.sort(keyed((s) => s.useCount ?? 0));
             case "vault":
-                return symbols.sort(keyed((s) => scan?.counts.get(s.id)?.total ?? 0));
+                return symbols.sort(keyed((s) => st(s)?.total ?? 0));
+            case "logged":
+                return symbols.sort(keyed((s) => (st(s)?.lastDate ? dayNumber(st(s)!.lastDate!) : 0)));
             default:
                 return symbols.sort(keyed((s) => s.lastUsed ?? 0));
         }
@@ -212,7 +210,16 @@ export class SymbolAtlasView extends ItemView {
     private renderList() {
         const el = this.listEl;
         el.empty();
-        const symbols = this.sortedFiltered();
+
+        setIcon(this.layoutToggle, this.layout === "list" ? "layout-grid" : "list");
+        this.layoutToggle.setAttribute("aria-label", this.layout === "list" ? "Show as grid" : "Show as list");
+        setIcon(this.subtitleToggle, this.showSubtitles ? "eye" : "eye-off");
+        this.subtitleToggle.setAttribute("aria-label", this.showSubtitles ? "Hide descriptions" : "Show descriptions");
+        this.subtitleToggle.toggleClass("is-active", !this.showSubtitles);
+        this.subtitleToggle.toggle(this.layout === "list");
+
+        const stats = this.plugin.getStats();
+        const symbols = this.sortedFiltered(stats);
         if (symbols.length === 0) {
             el.createDiv({
                 cls: "symbol-atlas-empty",
@@ -220,7 +227,28 @@ export class SymbolAtlasView extends ItemView {
             });
             return;
         }
-        const scan = this.plugin.vaultScan;
+        if (this.layout === "grid") this.renderGrid(el, symbols);
+        else this.renderRows(el, symbols, stats);
+    }
+
+    private renderGrid(el: HTMLElement, symbols: SymbolEntry[]) {
+        el.className = "symbol-atlas-grid";
+        for (const s of symbols) {
+            const btn = el.createEl("button", {
+                cls: "symbol-atlas-grid-btn",
+                text: s.emoji,
+                attr: { "aria-label": s.subtitle ? `${s.name}\n${s.subtitle}` : s.name },
+            });
+            // Combos like 🧠📺 get a double-width button.
+            if (graphemeCount(s.emoji) > 1) btn.addClass("is-multi");
+            btn.addEventListener("click", () => this.insert(s));
+        }
+    }
+
+    private renderRows(el: HTMLElement, symbols: SymbolEntry[], stats: JournalStats) {
+        el.className = "symbol-atlas-list";
+        const today = localToday();
+        const summary = this.plugin.settings.sidebarSummary && this.plugin.index.ready;
         for (const s of symbols) {
             const row = el.createDiv({
                 cls: "symbol-atlas-row",
@@ -229,10 +257,17 @@ export class SymbolAtlasView extends ItemView {
             row.createSpan({ cls: "symbol-atlas-emoji", text: s.emoji });
             const text = row.createDiv({ cls: "symbol-atlas-text" });
             text.createDiv({ cls: "symbol-atlas-name", text: s.name });
-            if (s.subtitle) {
+            if (s.subtitle && this.showSubtitles) {
                 text.createDiv({ cls: "symbol-atlas-subtitle", text: s.subtitle });
             }
-            text.createDiv({ cls: "symbol-atlas-meta", text: this.describeUsage(s, scan?.counts.get(s.id)) });
+            if (summary) {
+                const st = stats.bySymbol.get(symbolKey(s.emoji));
+                const parts = [`${st?.total ?? 0}×`];
+                if (stats.journalDates.size > 0) {
+                    parts.push(st?.lastDate ? `last ${daysAgo(st.lastDate, today)}` : "never logged");
+                }
+                text.createDiv({ cls: "symbol-atlas-meta", text: parts.join(" · ") });
+            }
 
             const copy = row.createDiv({
                 cls: "clickable-icon symbol-atlas-copy",
@@ -246,27 +281,12 @@ export class SymbolAtlasView extends ItemView {
 
             row.addEventListener("click", () => this.insert(s));
             row.addEventListener("keydown", (evt) => {
-                if (evt.key === "Enter" || evt.key === " ") {
+                if (evt.target === row && (evt.key === "Enter" || evt.key === " ")) {
                     evt.preventDefault();
                     this.insert(s);
                 }
             });
         }
-    }
-
-    private describeUsage(s: SymbolEntry, vault: OccurrenceCounts | undefined): string {
-        const parts: string[] = [];
-        if (s.useCount) parts.push(`inserted ${s.useCount}×`);
-        if (s.lastUsed) parts.push(`last inserted ${formatRelative(s.lastUsed)}`);
-        if (parts.length === 0) parts.push("never inserted");
-        if (vault) {
-            parts.push(
-                vault.total > 0
-                    ? `${vault.total} in vault (${vault.notes} note${vault.notes === 1 ? "" : "s"})`
-                    : "not in vault"
-            );
-        }
-        return parts.join(" · ");
     }
 
     private async insert(s: SymbolEntry) {

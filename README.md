@@ -74,22 +74,50 @@ list" leaves your most-recently-synced symbols in place as an editable
 starting point.
 
 
-## Sidebar: statistics and full list
+## Sidebar and stats page
 
-Open it from the ribbon (map icon) or the command palette ("Open Symbol
-Atlas sidebar"). It shows:
-- **Totals**: number of symbols, total insertions, how many you've used, and
-  how many you've never used.
-- **Top**: your most-inserted symbols (counted from v1.3 onward; older usage
-  only has a "last used" time).
-- **Scan vault**: on demand, counts how often each symbol appears across
-  your notes (excluding the source note). If you've set a suffix like `::`,
-  it counts `<emoji>::`, which matches how entries are logged and avoids
-  counting 🧠 inside 🧠📺. `⭐` and `⭐️` count as the same symbol.
-- **Full list**: filter by descriptor, subtitle, or emoji name, and sort by
-  recent, A–Z, most used, or vault count. Tap a row to insert it at the
-  cursor of the last note you were editing; on a phone the sidebar closes
-  afterwards so you can see it.
+**The sidebar** (map icon in the ribbon, or "Open Symbol Atlas sidebar") is
+for quick inserting. At the top it shows a few totals and what you've logged
+in today's daily note, plus an **Open stats** button. Below that are your
+symbols, as a list (with an optional one-line summary like "34× · last 3d
+ago") or a grid of emoji buttons. Tap one to insert it at the cursor of the
+last note you were editing; on a phone the sidebar closes afterwards. The
+buttons next to the filter switch list/grid and hide/show descriptions for
+the moment; their defaults are in settings.
+
+**The stats page** opens as a tab ("Open stats" in the sidebar, or the "Open
+Symbol Atlas stats" command) and has room for the details:
+- **Overview**: symbols, entries in your notes, journal days, insertions,
+  and your most logged / most inserted symbols.
+- **Activity heatmap**: entries per day over the last year (half a year on
+  narrow screens), for all symbols or one.
+- **30-day trend**: the biggest changes between the last 30 days and the
+  30 before.
+- **Coverage**: how many daily notes have symbols, and how many per day.
+- **Often logged together**: symbols that show up on the same days.
+- **Upkeep**: *untracked symbols* (logged in notes but missing from your
+  atlas, with a + to add them) and *dormant symbols* (not logged in 60+
+  days, configurable).
+- **A card per symbol**: count in vault, last logged, days logged in the
+  last 30 with weekly bars, current and best streak, insert count, weekday
+  pattern, and recent entries linking to their notes.
+
+Every section can be switched on or off in settings.
+
+**Set up your journal first.** Date-based stats come from your daily notes,
+so in Settings → Symbol Atlas → Journal, set:
+- **Daily notes folder**: e.g. `05 - Journal` (subfolders included; blank
+  means the whole vault).
+- **Daily note filename format**: the same syntax as the Daily Notes
+  plugin. `YYYY` year, `MM`/`MMM` month, `DD`/`Do` day, `ddd` weekday, and
+  other words in `[brackets]`. For notes named `Journal 2026-10-05 Mon`, use
+  `[Journal] YYYY-MM-DD ddd`. The setting shows how many notes match.
+  If the Daily Notes core plugin is on, you can copy its settings in one click.
+
+An entry is a symbol followed by your suffix (e.g. `🧭:: tired but okay`).
+The plugin keeps a small index of entries (`symbol-index.json` in the
+plugin folder) and updates it as you edit, so stats stay current without
+re-reading every note.
 
 ## Next steps / ideas
 
@@ -112,6 +140,28 @@ Atlas sidebar"). It shows:
    `manifest.json`, and `styles.css` to the release.
 
 ## Version History
+
+### v1.3.1 (in progress)
+
+- **New stats page**, opened from the sidebar or the command palette: an
+  activity heatmap, 30-day trend, coverage, symbols logged together, upkeep
+  (untracked and dormant symbols), and a card per symbol with last logged,
+  frequency, streaks, weekday pattern and recent entries.
+- **Journal settings**: point the plugin at your daily notes folder and
+  filename format (e.g. `[Journal] YYYY-MM-DD ddd`) so each note's date is
+  read from its name.
+- **Simpler sidebar** for quick inserting: a few totals, today's symbols, an
+  "Open stats" button, and the symbols as a list or a grid of emoji buttons.
+- Every stat can be shown or hidden in settings, and the sidebar's layout and
+  descriptions have settings defaults.
+- Symbols are counted from a saved index that updates as you edit, so
+  there's no "Scan vault" button anymore. Counting is also more accurate:
+  `📺::` is no longer counted inside `🧠📺::`.
+- The sidebar uses Obsidian's interface font size (like the file explorer)
+  instead of the larger editor text size.
+- The chips in the sidebar are display-only; tapping them no longer inserts
+  the symbol.
+- Inserting from the sidebar works even when the stats page is the active tab.
 
 ### v1.3.0 update: sidebar with stats, more reliable note source on mobile
 
