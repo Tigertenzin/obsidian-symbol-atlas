@@ -96,6 +96,19 @@ Atlas sidebar"). It shows:
 - Add tag/category fields to symbols for grouping.
 - Add drag-to-reorder in settings.
 
+## Releasing
+
+1. Bump `version` in `manifest.json` and `package.json`, add a section to
+   the version history below, and run `npm test && npm run build`.
+2. Commit, then push an annotated tag named exactly the version (no `v`),
+   whose message becomes the release notes:
+   ```
+   git tag -a 1.3.0 -F notes.md
+   git push origin 1.3.0
+   ```
+3. The Release workflow builds the plugin and publishes a GitHub release
+   with `main.js`, `manifest.json`, and `styles.css` attached.
+
 ## Version History
 
 ### v1.3.0 update: sidebar with stats, more reliable note source on mobile
