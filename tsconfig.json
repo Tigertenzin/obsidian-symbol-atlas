@@ -9,6 +9,9 @@
         "noImplicitAny": true,
         "moduleResolution": "node",
         "importHelpers": true,
+        "noEmit": true,
+        "allowImportingTsExtensions": true,
+        "allowSyntheticDefaultImports": true,
         "isolatedModules": true,
         "strictNullChecks": true,
         "lib": [
