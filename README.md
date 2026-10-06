@@ -2,7 +2,7 @@
 
 A custom emoji-style picker for Obsidian, populated entirely from my "Symbol Atlas": a list of {emoji, descriptor} 
 
-## methodology 
+## Motivation
 
 I created this plugin as a way to make adding emoji into my daily journal more convenient. Why? 
 
@@ -20,18 +20,47 @@ There’s also the option to append a predefined string after the symbol, in my 
 
 ## Features
 
-- Open the picker via the Command Palette or a keyboard shortcut
-  (default: Cmd/Ctrl+Shift+E — change it anytime in Settings > Hotkeys).
-- Fuzzy search by descriptor name.
-- Sort by "Recently used" or "Alphabetical" (toggle in plugin settings).
-- Add, edit, and delete symbols directly from the settings tab — no manual
-  JSON editing required (though import/export JSON is also supported).
-- Selecting a symbol inserts the emoji at your cursor and updates its
-  "last used" timestamp and use count.
-- A **Symbol Atlas sidebar tab** (ribbon map icon, or the "Open Symbol
-  Atlas sidebar" command) with usage statistics and the full, filterable
-  symbol list. Tap a symbol to insert it into the note you were last
-  editing, or use its copy button.
+- **Symbol picker**
+  - Open it from the command palette or with a hotkey (default:
+    Cmd/Ctrl+Shift+E; change it in Settings → Hotkeys).
+  - Fuzzy search by descriptor, subtitle, or the emoji's own name (typing
+    "brain" finds 🧠, even inside combos like 🧠📺).
+  - Sort by recently used or alphabetically.
+  - Inserts the symbol at your cursor, optionally followed by text of your
+    choice (e.g. `::`).
+- **Your Symbol Atlas**
+  - Manage symbols in settings: add, edit, and delete them, each with an
+    optional subtitle for extra context.
+  - Or keep them in a note: list items like `- 🧭:: how i'm feeling` under a
+    heading you choose become symbols.
+    - Sub-bullets under a symbol become its subtitle.
+    - The list re-syncs whenever you save the note.
+  - Import and export the list as JSON.
+- **Sidebar** for quick inserting
+  - A few totals at a glance, plus the symbols you've logged in today's note.
+  - Your symbols as a list or a grid of emoji buttons. Tap one to insert it
+    into the note you were editing, or copy it.
+  - Filter, sort, and hide descriptions.
+- **Stats page** for your journal
+  - Activity heatmap, for all symbols or just one.
+  - 30-day trend, coverage (how many daily notes have symbols), and symbols
+    often logged together.
+  - A card per symbol: times logged, last logged, frequency, streaks,
+    weekday pattern, and recent entries linking to their notes.
+  - Upkeep: symbols you use but haven't added to your atlas (one tap to add
+    them), and symbols you haven't logged in a while.
+  - Dates come from your daily notes' file names, in whatever format you use
+    (e.g. `Journal 2026-10-05 Mon`).
+  - Every stat can be switched on or off in settings.
+- **Works on desktop, iPhone, and iPad.**
+
+## Installing and updating
+
+Download `main.js`, `manifest.json`, and `styles.css` from the
+[latest release](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases/latest) into your vault's
+`.obsidian/plugins/symbol-atlas/` folder (create it if needed), then enable
+or reload Symbol Atlas in Settings → Community plugins. To update, replace
+the same three files and restart Obsidian. Requires Obsidian 1.6.6 or newer.
 
 ## How data is stored
 
@@ -45,7 +74,7 @@ buttons in settings, e.g. to back it up or edit it in bulk.
 ## Customizing your Symbol Atlas
 
 Go to Settings > Symbol Atlas. There you can:
-- Add a new emoji + descriptor pair.
+- Add a new emoji + descriptor pair, with an optional subtitle.
 - Edit or delete existing entries.
 - Switch sort mode between "Recently used" and "Alphabetical".
 - Set text to automatically insert after each symbol (e.g. `::`).
@@ -141,7 +170,9 @@ re-reading every note.
 
 ## Version History
 
-### v1.3.1 update: stats page, journal stats, simpler sidebar
+Every version is on the [releases page](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases).
+
+### [v1.3.1](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases/tag/1.3.1): stats page, journal stats, simpler sidebar
 
 - **New stats page**, opened from the sidebar or the command palette: an
   activity heatmap, 30-day trend, coverage, symbols logged together, upkeep
@@ -163,7 +194,7 @@ re-reading every note.
   the symbol.
 - Inserting from the sidebar works even when the stats page is the active tab.
 
-### v1.3.0 update: sidebar with stats, more reliable note source on mobile
+### [v1.3.0](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases/tag/1.3.0): sidebar with stats, more reliable note source on mobile
 
 - **Fix:** the "source note not found" notice that showed on every launch
   on iPad/iPhone. The startup sync used to run before Obsidian had finished
@@ -178,7 +209,7 @@ re-reading every note.
   is corrected.
 - **Fix:** an edit to the source note made while a sync was already
   running was dropped; it now re-syncs right after.
-- New sidebar tab with statistics and the full symbol list (see above).
+- New sidebar tab with statistics and the full symbol list.
 - Symbols now track how many times they've been inserted.
 - Manually managed symbols can now have a subtitle (add/edit dialogs).
 - The picker also searches subtitles.
@@ -188,14 +219,14 @@ re-reading every note.
   note".
 - Copying to the clipboard now reports failures instead of failing silently.
 
-### v1.2.1 update: symbol subtitles from note sub-bullets
+### [v1.2.1](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases/tag/1.2.1): symbol subtitles from note sub-bullets
 
 When sourcing symbols from a note, a sub-bullet directly under a symbol
 that doesn't itself contain `::` now becomes that symbol's subtitle,
 shown under its name in the picker (see "Sourcing symbols from a note
 instead" above). No settings changes — this only affects vault-note mode.
 
-### v1.2 update: toolbar icon, auto-inserted suffix, and note-sourced symbols
+### [v1.2.0](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases/tag/1.2.0): toolbar icon, auto-inserted suffix, and note-sourced symbols
 
 - The command now has a proper icon (smiley-plus) instead of a generic
   question mark in the command palette / toolbar.
@@ -211,41 +242,10 @@ instead" above). No settings changes — this only affects vault-note mode.
 - Requires Obsidian **1.6.6** or newer (bumped from 1.1.0) — the note-source
   feature relies on newer Obsidian APIs.
 
-### Updating from v1.1
-
-1. Replace `main.ts`, `package.json`, and `manifest.json` in your project
-   folder with the new versions from this package.
-2. In a terminal, in the project folder, run:
-   ```
-   npm run build
-   ```
-   (no `npm install` needed — no new dependencies were added.)
-3. Copy the freshly generated `main.js`, plus the updated `manifest.json`,
-   into your vault's `<YourVault>/.obsidian/plugins/symbol-atlas/` folder,
-   overwriting the old ones. `styles.css` doesn't need to change.
-4. In Obsidian, reload the plugin: Settings > Community plugins > toggle
-   Symbol Atlas off then on again (or just restart Obsidian).
-
-### v1.1 update: search by emoji name too
+### [v1.1.0](https://github.com/Tigertenzin/obsidian-symbol-atlas/releases/tag/1.1.0): first release, with search by emoji name
 
 The picker now matches against both your descriptor text AND the emoji's
 official Unicode name (e.g. typing "brain" will find 🧠 even if your
 descriptor is "Deeper Thoughts"). This uses the small `gemoji` package to
 look up names, and works for multi-emoji combos too (e.g. "🧠📺" matches
 "brain" or "television").
-
-### Updating from v1.0
-
-1. Replace `main.ts` and `package.json` in your project folder with the
-   new versions from this package.
-2. In a terminal, in the project folder, run:
-   ```
-   npm install
-   npm run build
-   ```
-   (`npm install` is required this time because gemoji is a new dependency.)
-3. Copy the freshly generated `main.js` into your vault's
-   `<YourVault>/.obsidian/plugins/symbol-atlas/` folder, overwriting the
-   old one. `manifest.json` and `styles.css` don't need to change.
-4. In Obsidian, reload the plugin: Settings > Community plugins > toggle
-   Symbol Atlas off then on again (or just restart Obsidian).
