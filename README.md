@@ -77,19 +77,42 @@ starting point.
 ## Sidebar: statistics and full list
 
 Open it from the ribbon (map icon) or the command palette ("Open Symbol
-Atlas sidebar"). It shows:
-- **Totals**: number of symbols, total insertions, how many you've used, and
-  how many you've never used.
-- **Top**: your most-inserted symbols (counted from v1.3 onward; older usage
-  only has a "last used" time).
-- **Scan vault**: on demand, counts how often each symbol appears across
-  your notes (excluding the source note). If you've set a suffix like `::`,
-  it counts `<emoji>::`, which matches how entries are logged and avoids
-  counting 🧠 inside 🧠📺. `⭐` and `⭐️` count as the same symbol.
-- **Full list**: filter by descriptor, subtitle, or emoji name, and sort by
-  recent, A–Z, most used, or vault count. Tap a row to insert it at the
-  cursor of the last note you were editing; on a phone the sidebar closes
-  afterwards so you can see it.
+Atlas sidebar"). Everything in it can be switched on or off in settings.
+
+**Set up your journal first.** Date-based stats come from your daily notes,
+so in Settings → Symbol Atlas → Journal, set:
+- **Daily notes folder**: e.g. `05 - Journal` (subfolders included; blank
+  means the whole vault).
+- **Daily note filename format**: the same syntax as the Daily Notes
+  plugin. `YYYY` year, `MM`/`MMM` month, `DD`/`Do` day, `ddd` weekday, and
+  other words in `[brackets]`. For notes named `Journal 2026-10-05 Mon`, use
+  `[Journal] YYYY-MM-DD ddd`. The setting shows how many notes match.
+  If the Daily Notes core plugin is on, you can copy its settings in one click.
+
+An entry is a symbol followed by your suffix (e.g. `🧭:: tired but okay`).
+The plugin keeps a small index of entries (`symbol-index.json` in the
+plugin folder) and updates it as you edit, so stats stay current without
+re-reading every note.
+
+**At the top**
+- **Overview**: symbols, entries in your notes, journal days, insertions.
+- **Most logged / most inserted**: your top symbols (display only).
+- **Journal**: an activity heatmap (last 26 weeks, all symbols or one),
+  the biggest changes between the last 30 days and the 30 before, coverage
+  (how many daily notes have symbols, and how many per day), and symbols
+  often logged on the same day.
+- **Upkeep**: *untracked symbols* (logged in notes but missing from your
+  atlas: typos, or new ones worth adding, with a + to add them), and
+  *dormant symbols* (not logged in 60+ days, configurable).
+
+**Under each symbol in the list**: insert count, count in vault, last
+logged, frequency (days in the last 30, with bars for the last 8 weeks),
+streaks, weekday pattern, and recent entries linking to their notes.
+Descriptions (subtitles) can be hidden with the eye button; their default
+is a setting.
+
+Tap a row to insert the symbol at the cursor of the last note you were
+editing; on a phone the sidebar closes afterwards so you can see it.
 
 ## Next steps / ideas
 
@@ -115,12 +138,23 @@ Atlas sidebar"). It shows:
 
 ### v1.3.1 (in progress)
 
-- The sidebar now uses Obsidian's interface font size (like the file
-  explorer) instead of the larger editor text size.
-- New option to hide symbol descriptions (subtitles) in the sidebar: the eye
-  button next to the sort menu, or "Show descriptions in sidebar" in settings.
-- The "Top" / "In vault" chips at the top of the sidebar are display-only;
-  tapping them no longer inserts the symbol.
+- **Journal stats.** Point the plugin at your daily notes folder and filename
+  format (e.g. `[Journal] YYYY-MM-DD ddd`) and the sidebar adds an activity
+  heatmap, a 30-day trend, coverage, and symbols logged together, plus per
+  symbol: last logged, frequency with weekly bars, streaks, weekday pattern,
+  and recent entries.
+- **Upkeep**: untracked symbols (in your notes but not your atlas, one tap to
+  add) and dormant symbols.
+- Every stat can be shown or hidden in settings.
+- Symbols are now counted from a saved index that updates as you edit, so
+  there's no "Scan vault" button to press anymore. Counting is also more
+  accurate: `📺::` is no longer counted inside `🧠📺::`.
+- The sidebar uses Obsidian's interface font size (like the file explorer)
+  instead of the larger editor text size.
+- Symbol descriptions can be hidden in the sidebar (eye button), with the
+  default set in settings.
+- The chips at the top of the sidebar are display-only; tapping them no
+  longer inserts the symbol.
 
 ### v1.3.0 update: sidebar with stats, more reliable note source on mobile
 

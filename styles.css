@@ -42,7 +42,7 @@
     gap: var(--size-4-3);
 }
 
-.symbol-atlas-stats {
+.symbol-atlas-top {
     display: flex;
     flex-direction: column;
     gap: var(--size-4-2);
@@ -110,12 +110,6 @@
     font-variant-numeric: tabular-nums;
 }
 
-.symbol-atlas-scan-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--size-4-2);
-}
 
 .symbol-atlas-meta {
     color: var(--text-muted);
@@ -148,7 +142,7 @@
 
 .symbol-atlas-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     padding: var(--size-4-1) var(--size-4-2);
     border-radius: var(--radius-s);
@@ -167,6 +161,7 @@
 
 .symbol-atlas-row .symbol-atlas-emoji {
     font-size: 1.25em;
+    line-height: 1.2;
 }
 
 .symbol-atlas-empty {
@@ -178,4 +173,210 @@
 /* The sidebar has room to show a subtitle in full, unlike the picker. */
 .symbol-atlas-row .symbol-atlas-subtitle {
     white-space: normal;
+}
+
+/* Collapsible Journal / Upkeep sections */
+
+.symbol-atlas-section {
+    border-top: 1px solid var(--background-modifier-border);
+    padding-top: var(--size-4-2);
+}
+
+.symbol-atlas-section > summary {
+    cursor: pointer;
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+}
+
+.symbol-atlas-section-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    padding-top: var(--size-4-2);
+}
+
+.symbol-atlas-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-2-2);
+}
+
+.symbol-atlas-block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--size-4-2);
+}
+
+.symbol-atlas-block-title {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.symbol-atlas-heatmap-select {
+    font-size: var(--font-ui-smaller);
+    max-width: 60%;
+}
+
+.symbol-atlas-stat-row {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-height: 1.8em;
+}
+
+.symbol-atlas-stat-emoji {
+    flex-shrink: 0;
+}
+
+.symbol-atlas-stat-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.symbol-atlas-stat-value {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Activity heatmap: one column per week (Mon–Sun), sized to the sidebar.
+   Single-hue scale from the theme accent, so it follows light/dark themes. */
+
+.symbol-atlas-heatmap {
+    display: grid;
+    grid-template-rows: repeat(7, auto);
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 2px;
+}
+
+.symbol-atlas-heat-cell {
+    aspect-ratio: 1;
+    border-radius: 2px;
+    background: var(--background-modifier-border);
+}
+
+.symbol-atlas-heat-cell.is-future {
+    visibility: hidden;
+}
+
+.symbol-atlas-heat-cell[data-level="1"] {
+    background: var(--interactive-accent);
+    opacity: 0.3;
+}
+
+.symbol-atlas-heat-cell[data-level="2"] {
+    background: var(--interactive-accent);
+    opacity: 0.55;
+}
+
+.symbol-atlas-heat-cell[data-level="3"] {
+    background: var(--interactive-accent);
+    opacity: 0.8;
+}
+
+.symbol-atlas-heat-cell[data-level="4"] {
+    background: var(--interactive-accent);
+}
+
+.symbol-atlas-heat-legend {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--size-4-2);
+}
+
+.symbol-atlas-heat-scale {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.symbol-atlas-heat-scale .symbol-atlas-heat-cell {
+    width: 9px;
+}
+
+.symbol-atlas-heat-scale > span {
+    margin: 0 var(--size-2-2);
+}
+
+/* Per-symbol frequency bars: days logged in each of the last 8 weeks. */
+
+.symbol-atlas-freq {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.symbol-atlas-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+}
+
+.symbol-atlas-bar {
+    width: 5px;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    background: var(--background-modifier-border);
+    border-radius: 1px;
+}
+
+.symbol-atlas-bar-fill {
+    width: 100%;
+    background: var(--interactive-accent);
+    border-radius: 1px;
+}
+
+/* Recent entries under a symbol */
+
+.symbol-atlas-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: var(--size-2-1);
+    padding-left: var(--size-4-2);
+    border-left: 2px solid var(--background-modifier-border);
+    font-size: var(--font-ui-smaller);
+}
+
+.symbol-atlas-entry {
+    display: flex;
+    gap: var(--size-4-2);
+    min-width: 0;
+}
+
+.symbol-atlas-entry-date {
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.symbol-atlas-entry-text {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.symbol-atlas-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.symbol-atlas-format-preview {
+    margin-top: var(--size-2-2);
+    color: var(--text-accent);
+}
+
+.symbol-atlas-format-preview.mod-warning {
+    color: var(--text-error);
 }

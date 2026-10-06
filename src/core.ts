@@ -313,68 +313,6 @@ export function resolveNotePath(stored: string, candidates: string[]): string | 
     return null;
 }
 
-// Strips the emoji variation selector (U+FE0F) so "⭐" and "⭐️" — which
-// render the same and are often produced interchangeably by different
-// keyboards — count as one symbol.
-function stripVariationSelectors(s: string): string {
-    return s.normalize("NFC").replace(/️/g, "");
-}
-
-export interface OccurrenceCounts {
-    total: number; // every occurrence across all scanned notes
-    notes: number; // number of notes containing at least one occurrence
-}
-
-// Counts how often each needle appears in a document. Needles are matched
-// after stripping variation selectors from both sides. Non-overlapping,
-// left to right.
-export function countOccurrences(text: string, needles: string[]): number[] {
-    const hay = stripVariationSelectors(text);
-    return needles.map((raw) => {
-        const needle = stripVariationSelectors(raw);
-        if (!needle) return 0;
-        let count = 0;
-        let from = 0;
-        for (;;) {
-            const at = hay.indexOf(needle, from);
-            if (at === -1) break;
-            count++;
-            from = at + needle.length;
-        }
-        return count;
-    });
-}
-
-export interface UsageStats {
-    symbolCount: number;
-    usedCount: number; // symbols inserted at least once
-    neverUsedCount: number;
-    totalInsertions: number;
-    mostUsed: SymbolEntry[]; // up to `top`, highest useCount first
-    recentlyUsed: SymbolEntry[]; // up to `top`, most recent first
-}
-
-export function computeUsageStats(symbols: SymbolEntry[], top = 5): UsageStats {
-    const used = symbols.filter((s) => (s.useCount ?? 0) > 0 || s.lastUsed !== undefined);
-    const totalInsertions = symbols.reduce((sum, s) => sum + (s.useCount ?? 0), 0);
-    const mostUsed = symbols
-        .filter((s) => (s.useCount ?? 0) > 0)
-        .sort((a, b) => (b.useCount ?? 0) - (a.useCount ?? 0) || a.name.localeCompare(b.name))
-        .slice(0, top);
-    const recentlyUsed = symbols
-        .filter((s) => s.lastUsed !== undefined)
-        .sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0))
-        .slice(0, top);
-    return {
-        symbolCount: symbols.length,
-        usedCount: used.length,
-        neverUsedCount: symbols.length - used.length,
-        totalInsertions,
-        mostUsed,
-        recentlyUsed,
-    };
-}
-
 // Short human description of how long ago a timestamp was, e.g. "3d ago".
 export function formatRelative(ts: number, now = Date.now()): string {
     const sec = Math.max(0, Math.round((now - ts) / 1000));
