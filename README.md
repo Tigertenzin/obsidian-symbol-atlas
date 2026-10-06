@@ -141,7 +141,7 @@ re-reading every note.
 
 ## Version History
 
-### v1.3.1 (in progress)
+### v1.3.1 update: stats page, journal stats, simpler sidebar
 
 - **New stats page**, opened from the sidebar or the command palette: an
   activity heatmap, 30-day trend, coverage, symbols logged together, upkeep
