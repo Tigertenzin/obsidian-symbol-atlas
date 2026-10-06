@@ -32,8 +32,11 @@
 
 /* Sidebar view */
 
+/* Sized like Obsidian's other sidebar panes (file explorer, outline), so it
+   follows the app's font size / zoom instead of the editor's text size. */
 .symbol-atlas-view {
     container-type: inline-size;
+    font-size: var(--font-ui-small);
     display: flex;
     flex-direction: column;
     gap: var(--size-4-3);
@@ -66,7 +69,7 @@
 }
 
 .symbol-atlas-tile-value {
-    font-size: 1.3em;
+    font-size: var(--font-ui-medium);
     font-weight: var(--font-semibold);
     font-variant-numeric: tabular-nums;
 }
@@ -97,8 +100,9 @@
     align-items: center;
     gap: var(--size-2-2);
     padding: var(--size-2-1) var(--size-4-2);
-    height: auto;
-    font-size: var(--font-ui-small);
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    cursor: default;
 }
 
 .symbol-atlas-chip-count {
@@ -146,7 +150,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: var(--size-4-2);
+    padding: var(--size-4-1) var(--size-4-2);
     border-radius: var(--radius-s);
     cursor: pointer;
 }
@@ -156,8 +160,13 @@
     background: var(--background-modifier-hover);
 }
 
-.symbol-atlas-copy {
+.symbol-atlas-copy,
+.symbol-atlas-subtitle-toggle {
     flex-shrink: 0;
+}
+
+.symbol-atlas-row .symbol-atlas-emoji {
+    font-size: 1.25em;
 }
 
 .symbol-atlas-empty {

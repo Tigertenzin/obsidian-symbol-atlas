@@ -42,6 +42,7 @@ interface SymbolAtlasSettings {
     noteSourcePath: string;
     noteSourceHeading: string;
     noteSourceLastSynced?: number;
+    sidebarShowSubtitles: boolean;
 }
 
 const DEFAULT_SETTINGS: SymbolAtlasSettings = {
@@ -51,6 +52,7 @@ const DEFAULT_SETTINGS: SymbolAtlasSettings = {
     symbolSource: "manual",
     noteSourcePath: "",
     noteSourceHeading: "",
+    sidebarShowSubtitles: true,
 };
 
 // How long the startup sync waits for the source note to show up in the
@@ -698,6 +700,18 @@ class SymbolAtlasSettingTab extends PluginSettingTab {
                         this.plugin.settings.symbolSuffix = value;
                         await this.plugin.saveSettings();
                     })
+            );
+
+        new Setting(containerEl)
+            .setName("Show descriptions in sidebar")
+            .setDesc(
+                "Show each symbol's subtitle under its name in the Symbol Atlas sidebar. Also toggled by the eye button there."
+            )
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.sidebarShowSubtitles).onChange(async (value) => {
+                    this.plugin.settings.sidebarShowSubtitles = value;
+                    await this.plugin.saveSettings();
+                })
             );
 
         new Setting(containerEl)

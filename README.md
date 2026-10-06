@@ -113,6 +113,15 @@ Atlas sidebar"). It shows:
 
 ## Version History
 
+### v1.3.1 (in progress)
+
+- The sidebar now uses Obsidian's interface font size (like the file
+  explorer) instead of the larger editor text size.
+- New option to hide symbol descriptions (subtitles) in the sidebar: the eye
+  button next to the sort menu, or "Show descriptions in sidebar" in settings.
+- The "Top" / "In vault" chips at the top of the sidebar are display-only;
+  tapping them no longer inserts the symbol.
+
 ### v1.3.0 update: sidebar with stats, more reliable note source on mobile
 
 - **Fix:** the "source note not found" notice that showed on every launch

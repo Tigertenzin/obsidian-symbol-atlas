@@ -22,6 +22,7 @@ export class SymbolAtlasView extends ItemView {
     // in it never loses focus when a background sync re-renders the view.
     private statsEl: HTMLElement;
     private listEl: HTMLElement;
+    private syncSubtitleToggle: (() => void) | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: SymbolAtlasPlugin) {
         super(leaf);
@@ -79,6 +80,21 @@ export class SymbolAtlasView extends ItemView {
             this.renderList();
         });
 
+        const subtitleToggle = controls.createDiv({ cls: "clickable-icon symbol-atlas-subtitle-toggle" });
+        const syncToggle = () => {
+            const shown = this.plugin.settings.sidebarShowSubtitles;
+            setIcon(subtitleToggle, shown ? "eye" : "eye-off");
+            subtitleToggle.setAttribute("aria-label", shown ? "Hide descriptions" : "Show descriptions");
+            subtitleToggle.toggleClass("is-active", !shown);
+        };
+        syncToggle();
+        subtitleToggle.addEventListener("click", async () => {
+            this.plugin.settings.sidebarShowSubtitles = !this.plugin.settings.sidebarShowSubtitles;
+            syncToggle();
+            await this.plugin.saveSettings();
+        });
+        this.syncSubtitleToggle = syncToggle;
+
         this.listEl = root.createDiv({ cls: "symbol-atlas-list" });
         this.refresh();
     }
@@ -89,6 +105,7 @@ export class SymbolAtlasView extends ItemView {
 
     refresh() {
         if (!this.statsEl || !this.listEl) return;
+        this.syncSubtitleToggle?.();
         this.renderStats();
         this.renderList();
     }
@@ -176,14 +193,15 @@ export class SymbolAtlasView extends ItemView {
         }
     }
 
+    // Display-only: the tooltip names the symbol, but tapping a chip does
+    // nothing (inserting is what the list below is for).
     private chip(parent: HTMLElement, s: SymbolEntry, count: string) {
-        const chip = parent.createEl("button", {
+        const chip = parent.createSpan({
             cls: "symbol-atlas-chip",
-            attr: { "aria-label": `Insert ${s.emoji} ${s.name}` },
+            attr: { "aria-label": s.name },
         });
         chip.createSpan({ text: s.emoji });
         chip.createSpan({ cls: "symbol-atlas-chip-count", text: count });
-        chip.addEventListener("click", () => this.insert(s));
     }
 
     private sortedFiltered(): SymbolEntry[] {
@@ -229,7 +247,7 @@ export class SymbolAtlasView extends ItemView {
             row.createSpan({ cls: "symbol-atlas-emoji", text: s.emoji });
             const text = row.createDiv({ cls: "symbol-atlas-text" });
             text.createDiv({ cls: "symbol-atlas-name", text: s.name });
-            if (s.subtitle) {
+            if (s.subtitle && this.plugin.settings.sidebarShowSubtitles) {
                 text.createDiv({ cls: "symbol-atlas-subtitle", text: s.subtitle });
             }
             text.createDiv({ cls: "symbol-atlas-meta", text: this.describeUsage(s, scan?.counts.get(s.id)) });
