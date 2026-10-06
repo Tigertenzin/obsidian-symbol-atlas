@@ -256,14 +256,9 @@ export class SymbolAtlasView extends ItemView {
 
     private describeUsage(s: SymbolEntry, vault: OccurrenceCounts | undefined): string {
         const parts: string[] = [];
-        parts.push(
-            s.useCount
-                ? `inserted ${s.useCount}×`
-                : s.lastUsed
-                ? "inserted"
-                : "never inserted"
-        );
-        if (s.lastUsed) parts.push(`last ${formatRelative(s.lastUsed)}`);
+        if (s.useCount) parts.push(`inserted ${s.useCount}×`);
+        if (s.lastUsed) parts.push(`last inserted ${formatRelative(s.lastUsed)}`);
+        if (parts.length === 0) parts.push("never inserted");
         if (vault) {
             parts.push(
                 vault.total > 0
