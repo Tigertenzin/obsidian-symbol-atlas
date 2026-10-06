@@ -1,13 +1,19 @@
-# Publishes a GitHub release whenever a version tag (e.g. "1.3.0") is pushed.
-# The tag must match manifest.json's version, and the annotated tag's message
-# becomes the release notes. Obsidian installs from the attached main.js,
-# manifest.json and styles.css.
+# Builds the plugin and attaches main.js, manifest.json and styles.css (what
+# Obsidian installs from) to the GitHub release for a version tag, e.g. "1.3.0".
+# The tag must match manifest.json's version. Two ways in:
+# - push an annotated tag: a release is created, with the tag message as notes;
+# - publish a release from the GitHub website: its files are attached.
 name: Release
 
 on:
   push:
     tags:
       - "*"
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.ref_name }}
 
 permissions:
   contents: write
@@ -38,10 +44,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # actions/checkout can leave the tag lightweight; refetch it so the
-          # annotation (the release notes) is available locally.
-          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-from-tag \
-            main.js manifest.json styles.css
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Release already exists (made on the website): just attach files.
+            gh release upload "$GITHUB_REF_NAME" main.js manifest.json styles.css --clobber
+          else
+            # actions/checkout can leave the tag lightweight; refetch it so the
+            # annotation (the release notes) is available locally.
+            git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-from-tag \
+              main.js manifest.json styles.css
+          fi

@@ -106,8 +106,10 @@ Atlas sidebar"). It shows:
    git tag -a 1.3.0 -F notes.md
    git push origin 1.3.0
    ```
-3. The Release workflow builds the plugin and publishes a GitHub release
-   with `main.js`, `manifest.json`, and `styles.css` attached.
+   Or, from the GitHub website: Releases → "Draft a new release", create
+   the tag (e.g. `1.3.0`) on `main`, write the notes, and publish.
+3. The Release workflow builds the plugin and attaches `main.js`,
+   `manifest.json`, and `styles.css` to the release.
 
 ## Version History
 
